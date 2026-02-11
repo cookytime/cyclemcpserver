@@ -1,0 +1,104 @@
+{
+  "name": "Routine",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the routine"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of the routine"
+    },
+    "theme": {
+      "type": "string",
+      "description": "Theme or emotional arc (e.g., Feel-good \u2192 Confidence \u2192 Full send)"
+    },
+    "intensity_arc": {
+      "type": "string",
+      "description": "Intensity progression description"
+    },
+    "resistance_scale_notes": {
+      "type": "string",
+      "description": "Resistance scale explanation (e.g., 1 = flat road, 10 = max hill)"
+    },
+    "class_summary": {
+      "type": "string",
+      "description": "Summary notes including peaks, accessibility, vibe"
+    },
+    "total_duration_minutes": {
+      "type": "number",
+      "description": "Total duration in minutes"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": [
+        "beginner",
+        "intermediate",
+        "advanced",
+        "expert"
+      ],
+      "description": "Difficulty level"
+    },
+    "track_ids": {
+      "type": "array",
+      "description": "Ordered list of track IDs in this routine",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Tags for categorizing routines",
+      "items": {
+        "type": "string"
+      }
+    },
+    "spotify_playlist_id": {
+      "type": "string",
+      "description": "Spotify playlist ID for this routine"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "create": true,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

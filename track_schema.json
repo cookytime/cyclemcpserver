@@ -1,0 +1,163 @@
+{
+  "name": "Track",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Name of the track/song"
+    },
+    "artist": {
+      "type": "string",
+      "description": "Artist name"
+    },
+    "album": {
+      "type": "string",
+      "description": "Album name"
+    },
+    "spotify_id": {
+      "type": "string",
+      "description": "Spotify track ID"
+    },
+    "spotify_album_art": {
+      "type": "string",
+      "description": "URL to Spotify album artwork"
+    },
+    "spotify_url": {
+      "type": "string",
+      "description": "Spotify track URL for playback"
+    },
+    "duration_minutes": {
+      "type": "number",
+      "description": "Duration in minutes"
+    },
+    "bpm": {
+      "type": "number",
+      "description": "Beats per minute"
+    },
+    "intensity": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "extreme"
+      ],
+      "description": "Intensity level of the track"
+    },
+    "track_type": {
+      "type": "string",
+      "enum": [
+        "warmup",
+        "climb",
+        "sprint",
+        "recovery",
+        "cooldown",
+        "intervals",
+        "endurance"
+      ],
+      "description": "Type of track"
+    },
+    "base_rpm": {
+      "type": "number",
+      "description": "Base RPM for the track"
+    },
+    "base_effortlevel": {
+      "type": "number",
+      "description": "Base effort level for the track"
+    },
+    "choreography": {
+      "type": "array",
+      "description": "Choreography cues for the track",
+      "items": {
+        "type": "object",
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "description": "When to start this cue (e.g., 0:30)"
+          },
+          "resistance": {
+            "type": "string",
+            "description": "Resistance display with level (e.g., L5 (5))"
+          },
+          "rpmMin": {
+            "type": "number",
+            "description": "Minimum RPM"
+          },
+          "rpmMax": {
+            "type": "number",
+            "description": "Maximum RPM"
+          },
+          "position": {
+            "type": "string",
+            "enum": [
+              "Ride easy",
+              "Seated Climb",
+              "Racing Climb",
+              "Standing Climb",
+              "Racing",
+              "Hover"
+            ],
+            "description": "Riding position"
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional coaching note or cue"
+          }
+        }
+      }
+    },
+    "cues": {
+      "type": "array",
+      "description": "Coaching cues and motivational phrases",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "General notes about the track"
+    }
+  },
+  "required": [
+    "title"
+  ],
+  "rls": {
+    "create": true,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}
