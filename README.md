@@ -33,6 +33,12 @@ psql -h localhost -U your_db_user -d choreography -f schema.sql
 
 # Create routines tables
 psql -h localhost -U your_db_user -d choreography -f schema_routines.sql
+
+# Create track feedback tables
+psql -h localhost -U your_db_user -d choreography -f schema_trackfeedback.sql
+
+# Apply feedback audience migration (recommended for MCP rating workflow)
+psql -h localhost -U your_db_user -d choreography -f migrate_add_audience.sql
 ```
 
 Or connect to your database and run the schemas manually:
@@ -41,6 +47,8 @@ Or connect to your database and run the schemas manually:
 psql -h localhost -U your_db_user -d choreography
 \i schema.sql
 \i schema_routines.sql
+\i schema_trackfeedback.sql
+\i migrate_add_audience.sql
 ```
 
 ## Usage
@@ -109,7 +117,7 @@ Explore your data with the example queries:
 
 ## MCP Server
 
-The MCP server lets Claude help you build and refine cycling class playlists by querying your track database.
+The server is a standard MCP server, so any MCP-compatible AI client can use it to build and refine cycling class playlists from your local database.
 
 ### Install MCP Dependencies
 
@@ -117,13 +125,63 @@ The MCP server lets Claude help you build and refine cycling class playlists by 
 pip install -r requirements_mcp.txt
 ```
 
-### Add to Claude Code CLI
+### Run Server Directly (STDIO)
 
 ```bash
-claude mcp add choreography-db -- python /home/glen/Documents/Projects/base44sync/mcp_server.py
+python mcp_server.py --transport stdio
 ```
 
-### Add to Claude Desktop
+### Run Server Over SSE (HTTP)
+
+```bash
+python mcp_server.py --transport sse --host 0.0.0.0 --port 8000
+```
+
+Default SSE endpoints:
+- Stream endpoint: `http://localhost:8000/sse`
+- Message endpoint: `http://localhost:8000/messages/`
+
+You can customize paths:
+
+```bash
+python mcp_server.py --transport sse --host 0.0.0.0 --port 8000 --sse-path /events --message-path /messages/
+```
+
+### Run Server Over Streamable HTTP
+
+```bash
+python mcp_server.py --transport streamable-http --host 0.0.0.0 --port 8000
+```
+
+Default endpoint:
+- `http://localhost:8000/mcp`
+
+### Generic MCP Client Config
+
+Most MCP clients support a config shaped like this:
+
+```json
+{
+  "mcpServers": {
+    "choreography-db": {
+      "command": "python",
+      "args": ["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+For network transports, set args for SSE or streamable HTTP instead of stdio:
+- SSE: `["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "8000"]`
+- Streamable HTTP: `["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]`
+
+### Claude Code CLI (Example)
+
+```bash
+claude mcp add choreography-db -- python /home/glen/Documents/Projects/base44sync/mcp_server.py --transport stdio
+```
+
+### Claude Desktop (Example)
 
 Edit your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`):
 
@@ -132,7 +190,7 @@ Edit your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`):
   "mcpServers": {
     "choreography-db": {
       "command": "python",
-      "args": ["/home/glen/Documents/Projects/base44sync/mcp_server.py"]
+      "args": ["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "stdio"]
     }
   }
 }
@@ -153,7 +211,7 @@ Edit your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`):
 
 ### Example Queries
 
-Once connected, ask Claude things like:
+Once connected, ask your AI client things like:
 - "Build me a 45-minute intermediate cycling class"
 - "Find me high-energy climb tracks around 130 BPM"
 - "What are my top-rated sprint tracks?"

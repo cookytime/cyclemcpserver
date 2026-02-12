@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import logging
+import argparse
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -64,10 +65,23 @@ async def app_lifespan(server: FastMCP):
         'database': os.getenv('DB_NAME', 'choreography'),
         'user': os.getenv('DB_USER'),
         'password': os.getenv('DB_PASSWORD'),
+        'connect_timeout': int(os.getenv('DB_CONNECT_TIMEOUT', '5')),
     }
 
-    logger.info("Initializing database connection pool...")
-    pool = SimpleConnectionPool(1, 10, **db_config)
+    logger.info(
+        "Initializing database connection pool (host=%s port=%s db=%s user=%s)...",
+        db_config['host'],
+        db_config['port'],
+        db_config['database'],
+        db_config['user'] or "<unset>",
+    )
+    try:
+        pool = SimpleConnectionPool(1, 10, **db_config)
+    except Exception as e:
+        logger.error(
+            "Database connection failed. Check DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD and that PostgreSQL is reachable."
+        )
+        raise RuntimeError("Failed to initialize PostgreSQL connection pool") from e
     try:
         logger.info("MCP server ready.")
         yield AppContext(
@@ -82,7 +96,16 @@ async def app_lifespan(server: FastMCP):
 
 
 # Initialize FastMCP server
-mcp = FastMCP("choreography-db", lifespan=app_lifespan)
+mcp = FastMCP(
+    "choreography-db",
+    lifespan=app_lifespan,
+    host=os.getenv("MCP_HOST", "127.0.0.1"),
+    port=int(os.getenv("MCP_PORT", "8000")),
+    mount_path=os.getenv("MCP_MOUNT_PATH", "/"),
+    sse_path=os.getenv("MCP_SSE_PATH", "/sse"),
+    message_path=os.getenv("MCP_MESSAGE_PATH", "/messages/"),
+    streamable_http_path=os.getenv("MCP_HTTP_PATH", "/mcp"),
+)
 
 
 def get_conn(ctx):
@@ -345,7 +368,7 @@ def find_similar_tracks(
             params.append(ref['intensity'])
 
         where = f"WHERE {' AND '.join(conditions)}"
-        params.append(min(limit, 50))
+        safe_limit = min(limit, 50)
 
         cur.execute(f"""
             SELECT t.title, t.artist, t.bpm, t.intensity, t.track_type,
@@ -356,7 +379,7 @@ def find_similar_tracks(
             {where}
             ORDER BY ABS(t.bpm - %s), t.title
             LIMIT %s
-        """, [ref['bpm']] + params + [ref['bpm']])
+        """, [ref['bpm']] + params + [ref['bpm'], safe_limit])
 
         rows = serialize_rows(cur.fetchall())
         cur.close()
@@ -917,4 +940,57 @@ Consider:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    parser = argparse.ArgumentParser(description="Run choreography MCP server.")
+    parser.add_argument(
+        "--transport",
+        default=os.getenv("MCP_TRANSPORT", "stdio"),
+        help="MCP transport (default: stdio).",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("MCP_HOST", "127.0.0.1"),
+        help="Host for SSE/HTTP transports (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("MCP_PORT", "8000")),
+        help="Port for SSE/HTTP transports (default: 8000).",
+    )
+    parser.add_argument(
+        "--mount-path",
+        default=os.getenv("MCP_MOUNT_PATH", "/"),
+        help="Mount path for SSE transport app (default: /).",
+    )
+    parser.add_argument(
+        "--sse-path",
+        default=os.getenv("MCP_SSE_PATH", "/sse"),
+        help="SSE endpoint path (default: /sse).",
+    )
+    parser.add_argument(
+        "--message-path",
+        default=os.getenv("MCP_MESSAGE_PATH", "/messages/"),
+        help="SSE message endpoint path (default: /messages/).",
+    )
+    parser.add_argument(
+        "--http-path",
+        default=os.getenv("MCP_HTTP_PATH", "/mcp"),
+        help="Streamable HTTP endpoint path (default: /mcp).",
+    )
+    args = parser.parse_args()
+
+    # Apply network settings before transport startup.
+    mcp.settings.host = args.host
+    mcp.settings.port = args.port
+    mcp.settings.mount_path = args.mount_path
+    mcp.settings.sse_path = args.sse_path
+    mcp.settings.message_path = args.message_path
+    mcp.settings.streamable_http_path = args.http_path
+
+    logger.info(
+        "Starting MCP server transport=%s host=%s port=%s",
+        args.transport,
+        mcp.settings.host,
+        mcp.settings.port,
+    )
+    mcp.run(transport=args.transport, mount_path=args.mount_path)
