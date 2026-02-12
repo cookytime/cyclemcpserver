@@ -10,7 +10,7 @@ from sync_routines import Base44RoutineSync
 from sync_trackfeedback import Base44TrackFeedbackSync
 
 def main():
-    print("=== base44 Complete Sync ===\n")
+    print("=== Cycle MCP Server Complete Sync ===\n")
     overall_start = datetime.now()
     results = {}
 

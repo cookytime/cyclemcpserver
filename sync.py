@@ -238,7 +238,7 @@ class Base44Sync:
                 self.conn.close()
 
 def main():
-    print("=== base44 → PostgreSQL Sync ===\n")
+    print("=== Cycle MCP Server Sync ===\n")
 
     syncer = Base44Sync()
     success = syncer.run_sync()

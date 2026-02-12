@@ -1,0 +1,101 @@
+name: cyclemcpserver
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${DB_NAME:-cyclesync}
+      POSTGRES_USER: ${DB_USER:-glen}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./schema_routines.sql:/docker-entrypoint-initdb.d/02-schema_routines.sql:ro
+      - ./schema_trackfeedback.sql:/docker-entrypoint-initdb.d/03-schema_trackfeedback.sql:ro
+      - ./migrate_add_audience.sql:/docker-entrypoint-initdb.d/04-migrate_add_audience.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-glen} -d ${DB_NAME:-cyclesync}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    env_file:
+      - .env
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8000
+      MCP_HTTP_PATH: /mcp
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-cyclesync}
+      DB_USER: ${DB_USER:-glen}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${MCP_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 8000), 2); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  webapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapi
+    env_file:
+      - .env
+    environment:
+      MCP_SERVER_URL: http://mcp-server:8000/mcp
+      WEBAPI_HOST: 0.0.0.0
+      WEBAPI_PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-cyclesync}
+      DB_USER: ${DB_USER:-glen}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-server:
+        condition: service_healthy
+    ports:
+      - "${WEBAPI_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    profiles: ["sync"]
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-cyclesync}
+      DB_USER: ${DB_USER:-glen}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "sync_all.py"]
+
+volumes:
+  postgres_data:

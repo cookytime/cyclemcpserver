@@ -1,4 +1,4 @@
-# base44 → PostgreSQL Sync
+# Cycle MCP Server
 
 Sync your music tracks and workout routines from base44 to a local PostgreSQL database for choreography refinement using MCP servers.
 
@@ -156,6 +156,58 @@ python mcp_server.py --transport streamable-http --host 0.0.0.0 --port 8000
 Default endpoint:
 - `http://localhost:8000/mcp`
 
+### Run with Docker Compose
+
+Use this when you want reproducible local services for MCP + Web API.
+
+1. Create and fill your env file:
+
+```bash
+cp .env.example .env
+# edit .env with your DB/API/OpenAI values
+```
+
+2. If you are using containerized Postgres, initialize and sync data first:
+
+```bash
+# Start Postgres only
+docker compose up -d postgres
+
+# Pull tracks/routines from base44 into Postgres
+docker compose run --rm --profile sync sync
+```
+
+3. Build and start MCP + Web API:
+
+```bash
+docker compose up -d --build
+```
+
+4. Verify health:
+
+```bash
+curl http://localhost:8000/mcp
+curl http://localhost:8080/health
+```
+
+5. Stop services:
+
+```bash
+docker compose down
+```
+
+Notes:
+- The compose stack exposes:
+  - MCP server: `http://localhost:${MCP_HOST_PORT:-8000}/mcp`
+  - Web API: `http://localhost:${WEBAPI_HOST_PORT:-8080}`
+- The Web API calls MCP internally using `http://mcp-server:8000/mcp`.
+- Compose includes a `postgres` service and persists data in the `postgres_data` volume.
+- The `sync` profile service runs `sync_all.py` on demand.
+- DB credentials come from `.env` (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`).
+- If ports are busy, set host port overrides in `.env`, for example:
+  - `MCP_HOST_PORT=18000`
+  - `WEBAPI_HOST_PORT=18080`
+
 ### Protect MCP Server (Bearer Auth)
 
 Set these environment variables before starting `mcp_server.py`:
@@ -189,20 +241,20 @@ Most MCP clients support a config shaped like this:
   "mcpServers": {
     "choreography-db": {
       "command": "python",
-      "args": ["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "stdio"]
+      "args": ["/home/glen/Documents/Projects/cyclemcpserver/mcp_server.py", "--transport", "stdio"]
     }
   }
 }
 ```
 
 For network transports, set args for SSE or streamable HTTP instead of stdio:
-- SSE: `["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "8000"]`
-- Streamable HTTP: `["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]`
+- SSE: `["/home/glen/Documents/Projects/cyclemcpserver/mcp_server.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "8000"]`
+- Streamable HTTP: `["/home/glen/Documents/Projects/cyclemcpserver/mcp_server.py", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]`
 
 ### Claude Code CLI (Example)
 
 ```bash
-claude mcp add choreography-db -- python /home/glen/Documents/Projects/base44sync/mcp_server.py --transport stdio
+claude mcp add choreography-db -- python /home/glen/Documents/Projects/cyclemcpserver/mcp_server.py --transport stdio
 ```
 
 ### Claude Desktop (Example)
@@ -214,7 +266,7 @@ Edit your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`):
   "mcpServers": {
     "choreography-db": {
       "command": "python",
-      "args": ["/home/glen/Documents/Projects/base44sync/mcp_server.py", "--transport", "stdio"]
+      "args": ["/home/glen/Documents/Projects/cyclemcpserver/mcp_server.py", "--transport", "stdio"]
     }
   }
 }
@@ -249,7 +301,7 @@ Keep your database up to date with a cron job:
 
 ```bash
 # Add to crontab: sync every day at 2am
-0 2 * * * cd /path/to/base44sync && python sync_all.py >> sync.log 2>&1
+0 2 * * * cd /path/to/cyclemcpserver && python sync_all.py >> sync.log 2>&1
 ```
 
 ## Troubleshooting

@@ -559,7 +559,7 @@ def build_routine_payload(
     )
 
 
-app = FastAPI(title="Base44 Sync Web API", version="0.1.0")
+app = FastAPI(title="Cycle MCP Server Web API", version="0.1.0")
 
 
 @app.get("/health")
