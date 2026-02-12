@@ -45,4 +45,4 @@ req-sync:
 	$(PYTHON) -m piptools sync requirements.txt requirements_mcp.txt requirements_webapi.txt requirements-dev.txt
 
 ai-fix:
-	$(PYTHON) scripts/ai_fix.py --check-cmd "make check" --iterations 6 --max-files 1
+	$(PYTHON) scripts/ai_fix.py --check-cmd "make check" --iterations 6 --max-files 1 --request-timeout 240 --openai-retries 4

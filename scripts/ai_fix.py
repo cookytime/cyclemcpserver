@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -83,26 +84,43 @@ def call_openai(
     prompt: str,
     base_url: str,
     system_prompt: str = "Return only valid unified diff.",
+    request_timeout: int = 180,
+    retries: int = 3,
+    retry_backoff: float = 2.0,
 ) -> str:
-    response = requests.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-        },
-        timeout=120,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    return payload["choices"][0]["message"]["content"]
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "temperature": 0,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                },
+                timeout=request_timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return payload["choices"][0]["message"]["content"]
+        except requests.exceptions.RequestException as err:
+            last_err = err
+            if attempt >= retries:
+                break
+            sleep_s = retry_backoff ** (attempt - 1)
+            print(
+                f"OpenAI request failed (attempt {attempt}/{retries}): {err}. "
+                f"Retrying in {sleep_s:.1f}s..."
+            )
+            time.sleep(sleep_s)
+    raise RuntimeError(f"OpenAI request failed after {retries} attempts: {last_err}")
 
 
 def extract_patch(text: str) -> str:
@@ -215,6 +233,9 @@ def main() -> int:
         default=True,
     )
     parser.add_argument("--base-url", default=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+    parser.add_argument("--request-timeout", type=int, default=180)
+    parser.add_argument("--openai-retries", type=int, default=3)
+    parser.add_argument("--retry-backoff", type=float, default=2.0)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -248,7 +269,15 @@ def main() -> int:
             print(f"- {path}")
 
         prompt = build_prompt(files, repo_root, log_text, args.max_file_chars)
-        raw = call_openai(api_key, args.model, prompt, args.base_url)
+        raw = call_openai(
+            api_key,
+            args.model,
+            prompt,
+            args.base_url,
+            request_timeout=args.request_timeout,
+            retries=args.openai_retries,
+            retry_backoff=args.retry_backoff,
+        )
         patch_text = extract_patch(raw)
         if not patch_text.strip() or patch_text.strip() == "---":
             print("Model returned no usable patch.", file=sys.stderr)
@@ -275,7 +304,15 @@ def main() -> int:
                 patch_err,
                 args.max_file_chars,
             )
-            raw = call_openai(api_key, args.model, repair_prompt, args.base_url)
+            raw = call_openai(
+                api_key,
+                args.model,
+                repair_prompt,
+                args.base_url,
+                request_timeout=args.request_timeout,
+                retries=args.openai_retries,
+                retry_backoff=args.retry_backoff,
+            )
             patch_text = extract_patch(raw)
             write_patch(patch_text, patch_file)
             ok, patch_err = patch_check(repo_root, patch_file)
@@ -298,6 +335,9 @@ def main() -> int:
                 rewrite_prompt,
                 args.base_url,
                 system_prompt="Return only full Python file content.",
+                request_timeout=args.request_timeout,
+                retries=args.openai_retries,
+                retry_backoff=args.retry_backoff,
             )
             rewritten_text = extract_full_file(rewritten)
             if not rewritten_text.strip():
