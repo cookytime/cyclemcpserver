@@ -1120,7 +1120,7 @@ def recommend_class_tracks(
     exclude_songs_or_artists: str | None = None,
     audience: str | None = None,
 ) -> str:
-    """Return class-ready track suggestions with BPM, suggested type, and duration.
+    """Return OpenAI-suggested tracks, enriched from DB when available.
 
     Inputs mirror UI fields:
     - Class length
@@ -1128,191 +1128,114 @@ def recommend_class_tracks(
     - Custom intensity arc (comma-separated, optional)
     - Preferred genres/artists (comma-separated, optional)
     - Excluded genres and songs/artists (comma-separated, optional)
+
+    Output shape:
+    - If a suggested track exists in local DB (title+artist), return full DB track schema + suggest_type.
+    - Otherwise return: title, artist, bpm, suggest_type.
     """
     conn = get_conn(ctx)
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        preferred_genre_list = [g.lower() for g in parse_csv_list(preferred_genres)]
+        preferred_genre_list = parse_csv_list(preferred_genres)
         preferred_artist_list = parse_csv_list(preferred_artists)
         excluded_genre_list = [g.lower() for g in parse_csv_list(exclude_genres)]
         excluded_song_artist_list = parse_csv_list(exclude_songs_or_artists)
         arc = normalize_arc_types(custom_intensity_arc, class_length_minutes)
-
-        # Track count target (about 3.5-4.5 minutes average per song)
-        target_count = max(8, min(20, round(class_length_minutes / 4)))
-        if len(arc) < target_count:
-            repeats = (target_count + len(arc) - 1) // len(arc)
-            arc = (arc * repeats)[:target_count]
-        else:
-            arc = arc[:target_count]
 
         # Feedback signals for ranking and filtering.
         feedback = fetch_feedback_signals(conn, audience=audience)
         disliked_titles = {t.lower().strip() for t in feedback.get("disliked_titles", [])}
         disliked_artists = {a.lower().strip() for a in feedback.get("disliked_artists", [])}
 
+        # Track count target (about 3.5-4.5 minutes average per song).
+        target_count = max(8, min(20, round(class_length_minutes / 4)))
+
+        theme_parts = []
+        if theme:
+            theme_parts.append(f"Theme: {theme}")
+        if vibe:
+            theme_parts.append(f"Vibe: {vibe}")
+        if arc:
+            theme_parts.append(f"Class intensity arc: {', '.join(arc)}")
+        if preferred_genre_list:
+            theme_parts.append(f"Preferred genres: {', '.join(preferred_genre_list)}")
+        if preferred_artist_list:
+            theme_parts.append(f"Preferred artists: {', '.join(preferred_artist_list)}")
+        if excluded_genre_list:
+            theme_parts.append(f"Excluded genres: {', '.join(excluded_genre_list)}")
+        if excluded_song_artist_list:
+            theme_parts.append(f"Excluded songs or artists: {', '.join(excluded_song_artist_list)}")
+
+        composed_theme = " | ".join(theme_parts) if theme_parts else None
+
+        # OpenAI-first flow: generate candidate tracks using feedback + preferences.
+        ai_tracks = suggest_external_tracks_with_openai(
+            duration_minutes=class_length_minutes,
+            difficulty=None,
+            theme=composed_theme,
+            audience=audience,
+            needed_count=target_count,
+            existing_tracks=[],
+            feedback_signals=feedback,
+        )
+
         used: set[str] = set()
         results: list[dict[str, Any]] = []
-
-        for slot_type in arc:
-            conditions = []
-            params: list[Any] = []
-
-            # Slot type guidance first.
-            if slot_type == "build":
-                conditions.append("(track_type ILIKE %s OR track_type ILIKE %s)")
-                params.extend(["%endurance%", "%interval%"])
-            else:
-                conditions.append("track_type ILIKE %s")
-                params.append(f"%{slot_type}%")
-
-            if theme:
-                conditions.append("(title ILIKE %s OR artist ILIKE %s OR notes ILIKE %s OR focus_area ILIKE %s)")
-                th = f"%{theme}%"
-                params.extend([th, th, th, th])
-            if vibe:
-                conditions.append("(notes ILIKE %s OR focus_area ILIKE %s OR intensity ILIKE %s)")
-                vb = f"%{vibe}%"
-                params.extend([vb, vb, vb])
-
-            # "Genres" are approximated using notes/focus_area/track_type text fields.
-            for g in preferred_genre_list:
-                conditions.append("(notes ILIKE %s OR focus_area ILIKE %s OR track_type ILIKE %s)")
-                like = f"%{g}%"
-                params.extend([like, like, like])
-
-            for artist in preferred_artist_list:
-                conditions.append("artist ILIKE %s")
-                params.append(f"%{artist}%")
-
-            for g in excluded_genre_list:
-                conditions.append("(COALESCE(notes,'') NOT ILIKE %s AND COALESCE(focus_area,'') NOT ILIKE %s AND COALESCE(track_type,'') NOT ILIKE %s)")
-                like = f"%{g}%"
-                params.extend([like, like, like])
-
-            for ex in excluded_song_artist_list:
-                conditions.append("(title NOT ILIKE %s AND artist NOT ILIKE %s)")
-                like = f"%{ex}%"
-                params.extend([like, like])
-
-            where = " AND ".join(conditions) if conditions else "TRUE"
-
-            cur.execute(
-                f"""
-                SELECT t.id, t.title, t.artist, t.bpm, t.duration_minutes, t.track_type, t.spotify_id, t.spotify_url,
-                       COALESCE(fb.up_count, 0) as thumbs_up,
-                       COALESCE(fb.down_count, 0) as thumbs_down
-                FROM tracks t
-                LEFT JOIN (
-                    SELECT track_title,
-                           SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
-                           SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count
-                    FROM track_feedback
-                    GROUP BY track_title
-                ) fb ON fb.track_title = t.title
-                WHERE {where}
-                ORDER BY
-                    CASE WHEN COALESCE(fb.down_count, 0) > COALESCE(fb.up_count, 0) THEN 1 ELSE 0 END,
-                    COALESCE(fb.up_count, 0) DESC,
-                    RANDOM()
-                LIMIT 20
-                """,
-                params,
-            )
-            candidates = serialize_rows(cur.fetchall())
-
-            picked = None
-            for c in candidates:
-                key = normalize_track_key(str(c.get("title")), str(c.get("artist")))
-                if key in used:
-                    continue
-                if str(c.get("title", "")).lower().strip() in disliked_titles:
-                    continue
-                if str(c.get("artist", "")).lower().strip() in disliked_artists:
-                    continue
-                picked = c
+        excluded_tokens = [x.lower() for x in excluded_song_artist_list]
+        for t in ai_tracks:
+            if len(results) >= target_count:
                 break
 
-            if not picked:
+            title = str(t.get("title") or "").strip()
+            artist = str(t.get("artist") or "").strip()
+            if not title or not artist:
                 continue
 
-            used.add(normalize_track_key(str(picked.get("title")), str(picked.get("artist"))))
-            results.append(
-                {
-                    "title": picked.get("title"),
-                    "artist": picked.get("artist"),
-                    "bpm": picked.get("bpm"),
-                    "suggest_type": slot_type,
-                    "duration_minutes": picked.get("duration_minutes"),
-                    "spotify_id": picked.get("spotify_id"),
-                    "spotify_url": picked.get("spotify_url"),
-                    "source": "db",
-                }
+            title_lower = title.lower()
+            artist_lower = artist.lower()
+            key = normalize_track_key(title, artist)
+            if key in used:
+                continue
+            if title_lower in disliked_titles or artist_lower in disliked_artists:
+                continue
+            if any(token and (token in title_lower or token in artist_lower) for token in excluded_tokens):
+                continue
+
+            suggest_type = str(t.get("focus_area") or "build").lower()
+            if suggest_type not in {"warmup", "build", "climb", "sprint", "recovery", "cooldown"}:
+                suggest_type = "build"
+
+            cur.execute(
+                """
+                SELECT *
+                FROM tracks
+                WHERE LOWER(TRIM(title)) = LOWER(TRIM(%s))
+                  AND LOWER(TRIM(artist)) = LOWER(TRIM(%s))
+                LIMIT 1
+                """,
+                (title, artist),
             )
+            existing = cur.fetchone()
 
-        # Gap-fill using OpenAI when DB coverage is short.
-        needed_count = max(0, target_count - len(results))
-        ai_added = 0
-        if needed_count > 0:
-            ai_tracks = suggest_external_tracks_with_openai(
-                duration_minutes=class_length_minutes,
-                difficulty=None,
-                theme=theme,
-                audience=audience,
-                needed_count=needed_count,
-                existing_tracks=results,
-                feedback_signals=feedback,
-            )
-
-            # Keep exclusion matching simple and strict.
-            excluded_tokens = [x.lower() for x in excluded_song_artist_list]
-
-            for t in ai_tracks:
-                if ai_added >= needed_count:
-                    break
-                title = str(t.get("title") or "").strip()
-                artist = str(t.get("artist") or "").strip()
-                if not title or not artist:
-                    continue
-                title_lower = title.lower()
-                artist_lower = artist.lower()
-                key = normalize_track_key(title, artist)
-                if key in used:
-                    continue
-                if title_lower in disliked_titles or artist_lower in disliked_artists:
-                    continue
-                if any(token and (token in title_lower or token in artist_lower) for token in excluded_tokens):
-                    continue
-
-                used.add(key)
+            used.add(key)
+            if existing:
+                # If the AI suggestion exists in DB, return full DB track schema.
+                full_track = {k: serialize(v) for k, v in dict(existing).items()}
+                full_track["suggest_type"] = suggest_type
+                results.append(full_track)
+            else:
+                # If not in DB, return minimal shape only.
                 results.append(
                     {
                         "title": title,
                         "artist": artist,
                         "bpm": t.get("estimated_bpm"),
-                        "suggest_type": str(t.get("focus_area") or "build").lower(),
-                        "duration_minutes": None,
-                        "spotify_id": None,
-                        "spotify_url": None,
-                        "source": "ai",
+                        "suggest_type": suggest_type,
                     }
                 )
-                ai_added += 1
 
-        total_duration = sum((r.get("duration_minutes") or 0) for r in results)
-        return json.dumps(
-            {
-                "class_length_minutes": class_length_minutes,
-                "target_track_count": target_count,
-                "returned_track_count": len(results),
-                "db_track_count": len([r for r in results if r.get("source") == "db"]),
-                "ai_track_count": len([r for r in results if r.get("source") == "ai"]),
-                "estimated_duration_minutes": round(total_duration, 1),
-                "tracks": results,
-            },
-            indent=2,
-        )
+        return json.dumps({"tracks": results}, indent=2)
     finally:
         put_conn(ctx, conn)
 
