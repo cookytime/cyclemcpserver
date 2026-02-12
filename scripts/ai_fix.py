@@ -77,7 +77,13 @@ def build_prompt(
     )
 
 
-def call_openai(api_key: str, model: str, prompt: str, base_url: str) -> str:
+def call_openai(
+    api_key: str,
+    model: str,
+    prompt: str,
+    base_url: str,
+    system_prompt: str = "Return only valid unified diff.",
+) -> str:
     response = requests.post(
         f"{base_url.rstrip('/')}/chat/completions",
         headers={
@@ -88,7 +94,7 @@ def call_openai(api_key: str, model: str, prompt: str, base_url: str) -> str:
             "model": model,
             "temperature": 0,
             "messages": [
-                {"role": "system", "content": "Return only valid unified diff."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
         },
@@ -165,6 +171,33 @@ def build_repair_prompt(
     )
 
 
+def build_rewrite_prompt(
+    path: Path,
+    repo_root: Path,
+    log_text: str,
+    max_file_chars: int,
+) -> str:
+    text = (repo_root / path).read_text(encoding="utf-8")
+    if len(text) > max_file_chars:
+        text = text[:max_file_chars] + "\n# ...truncated..."
+    return (
+        "Rewrite this Python file to fix the reported check errors.\n"
+        "Return ONLY the full file content, no markdown fences, no explanations.\n"
+        "Preserve behavior unless required to fix issues.\n\n"
+        f"## Target File\n{path}\n\n"
+        f"## Check Output\n{log_text}\n\n"
+        "## Current File Content\n"
+        f"{text}\n"
+    )
+
+
+def extract_full_file(text: str) -> str:
+    fence = re.search(r"```(?:python)?\n(.*?)```", text, flags=re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    return text
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run checks and ask OpenAI for first-pass fixes.")
     parser.add_argument("--check-cmd", default="make check")
@@ -174,7 +207,13 @@ def main() -> int:
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
     parser.add_argument("--log-file", default=".run/check.log")
     parser.add_argument("--patch-file", default=".run/ai_fix.patch")
+    parser.add_argument("--rewrite-file", default=".run/ai_fix.rewrite.py")
     parser.add_argument("--patch-retries", type=int, default=2)
+    parser.add_argument(
+        "--rewrite-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--base-url", default=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -189,6 +228,7 @@ def main() -> int:
 
     log_file = (repo_root / args.log_file).resolve()
     patch_file = (repo_root / args.patch_file).resolve()
+    rewrite_file = (repo_root / args.rewrite_file).resolve()
 
     for i in range(1, args.iterations + 1):
         print(f"\n=== ai-fix iteration {i}/{args.iterations} ===")
@@ -241,10 +281,37 @@ def main() -> int:
             ok, patch_err = patch_check(repo_root, patch_file)
 
         if not ok:
-            raise RuntimeError(
-                f"Patch failed check:\n{patch_err}\n\n"
-                "Tip: retry with smaller scope, e.g. --max-files 1 and more iterations."
+            if not args.rewrite_fallback or len(files) != 1:
+                raise RuntimeError(
+                    f"Patch failed check:\n{patch_err}\n\n"
+                    "Tip: retry with smaller scope, e.g. --max-files 1 and more iterations."
+                )
+
+            target = files[0]
+            print(f"Patch still invalid. Falling back to full-file rewrite for {target}...")
+            rewrite_prompt = build_rewrite_prompt(
+                target, repo_root, log_text, args.max_file_chars
             )
+            rewritten = call_openai(
+                api_key,
+                args.model,
+                rewrite_prompt,
+                args.base_url,
+                system_prompt="Return only full Python file content.",
+            )
+            rewritten_text = extract_full_file(rewritten)
+            if not rewritten_text.strip():
+                raise RuntimeError("Rewrite fallback returned empty content.")
+
+            rewrite_file.parent.mkdir(parents=True, exist_ok=True)
+            rewrite_file.write_text(rewritten_text, encoding="utf-8")
+            if args.dry_run:
+                print(f"[dry-run] Wrote fallback file content to {rewrite_file}")
+                return 0
+
+            (repo_root / target).write_text(rewritten_text, encoding="utf-8")
+            print(f"Rewrote file from fallback: {target}")
+            continue
 
         apply_patch(repo_root, patch_file, False)
         print(f"Applied patch: {patch_file}")
