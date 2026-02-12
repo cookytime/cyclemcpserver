@@ -7,6 +7,7 @@ from psycopg2.extras import Json
 from datetime import datetime
 from config import Config
 
+
 class Base44RoutineSync:
     def __init__(self):
         Config.validate()
@@ -26,19 +27,12 @@ class Base44RoutineSync:
 
     def fetch_routines_from_base44(self):
         """Fetch routines from base44 API"""
-        headers = {
-            'api_key': self.api_key,
-            'Content-Type': 'application/json'
-        }
+        headers = {"api_key": self.api_key, "Content-Type": "application/json"}
 
         try:
             # base44 API endpoint for Routine entities
-            url = f'{self.api_url}/apps/{Config.BASE44_APP_ID}/entities/Routine'
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=30
-            )
+            url = f"{self.api_url}/apps/{Config.BASE44_APP_ID}/entities/Routine"
+            response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             routines = response.json()
 
@@ -57,18 +51,18 @@ class Base44RoutineSync:
         try:
             # Extract routine data from base44 API response
             # Convert empty strings to None for cleaner database storage
-            base44_id = routine.get('id')
-            name = routine.get('name') or None
-            description = routine.get('description') or None
-            theme = routine.get('theme') or None
-            intensity_arc = routine.get('intensity_arc') or None
-            resistance_scale_notes = routine.get('resistance_scale_notes') or None
-            class_summary = routine.get('class_summary') or None
-            total_duration_minutes = routine.get('total_duration_minutes') or None
-            difficulty = routine.get('difficulty') or None
-            spotify_playlist_id = routine.get('spotify_playlist_id') or None
-            track_ids = routine.get('track_ids') or []
-            tags = routine.get('tags') or []
+            base44_id = routine.get("id")
+            name = routine.get("name") or None
+            description = routine.get("description") or None
+            theme = routine.get("theme") or None
+            intensity_arc = routine.get("intensity_arc") or None
+            resistance_scale_notes = routine.get("resistance_scale_notes") or None
+            class_summary = routine.get("class_summary") or None
+            total_duration_minutes = routine.get("total_duration_minutes") or None
+            difficulty = routine.get("difficulty") or None
+            spotify_playlist_id = routine.get("spotify_playlist_id") or None
+            track_ids = routine.get("track_ids") or []
+            tags = routine.get("tags") or []
 
             if not base44_id or not name:
                 print(f"⚠ Skipping routine with missing required fields: {routine}")
@@ -79,7 +73,8 @@ class Base44RoutineSync:
             tags_json = Json(tags) if tags else None
 
             # Insert or update routine
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO routines (
                     base44_id, name, description, theme, intensity_arc,
                     resistance_scale_notes, class_summary, total_duration_minutes,
@@ -100,30 +95,47 @@ class Base44RoutineSync:
                     tags = EXCLUDED.tags,
                     updated_at = CURRENT_TIMESTAMP
                 RETURNING id, (xmax = 0) AS inserted
-            """, (
-                base44_id, name, description, theme, intensity_arc,
-                resistance_scale_notes, class_summary, total_duration_minutes,
-                difficulty, spotify_playlist_id, tags_json
-            ))
+            """,
+                (
+                    base44_id,
+                    name,
+                    description,
+                    theme,
+                    intensity_arc,
+                    resistance_scale_notes,
+                    class_summary,
+                    total_duration_minutes,
+                    difficulty,
+                    spotify_playlist_id,
+                    tags_json,
+                ),
+            )
 
             result = cursor.fetchone()
             routine_id = result[0]
             was_inserted = result[1]
 
             # Delete existing track associations for this routine
-            cursor.execute("DELETE FROM routine_tracks WHERE routine_id = %s", (routine_id,))
+            cursor.execute(
+                "DELETE FROM routine_tracks WHERE routine_id = %s", (routine_id,)
+            )
 
             # Insert track associations in order
             for order, track_base44_id in enumerate(track_ids, start=1):
                 # Try to find the track_id if the track exists in our database
-                cursor.execute("SELECT id FROM tracks WHERE base44_id = %s", (track_base44_id,))
+                cursor.execute(
+                    "SELECT id FROM tracks WHERE base44_id = %s", (track_base44_id,)
+                )
                 track_row = cursor.fetchone()
                 track_id = track_row[0] if track_row else None
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO routine_tracks (routine_id, track_base44_id, track_id, track_order)
                     VALUES (%s, %s, %s, %s)
-                """, (routine_id, track_base44_id, track_id, order))
+                """,
+                    (routine_id, track_base44_id, track_id, order),
+                )
 
             cursor.execute("RELEASE SAVEPOINT routine_sync")
             return was_inserted
@@ -131,7 +143,9 @@ class Base44RoutineSync:
         except Exception as e:
             # Rollback just this routine's changes
             cursor.execute("ROLLBACK TO SAVEPOINT routine_sync")
-            print(f"✗ Error syncing routine '{routine.get('name', 'unknown')}' (ID: {routine.get('id', 'unknown')}): {e}")
+            print(
+                f"✗ Error syncing routine '{routine.get('name', 'unknown')}' (ID: {routine.get('id', 'unknown')}): {e}"
+            )
             return None
 
     def run_sync(self):
@@ -174,7 +188,9 @@ class Base44RoutineSync:
             print(f"  - Routines added: {routines_added}")
             print(f"  - Routines updated: {routines_updated}")
             print(f"  - Total routines: {len(routines)}")
-            print(f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds")
+            print(
+                f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds"
+            )
 
             return True
 
@@ -187,6 +203,7 @@ class Base44RoutineSync:
             if self.conn:
                 self.conn.close()
 
+
 def main():
     print("=== base44 Routines → PostgreSQL Sync ===\n")
 
@@ -195,5 +212,6 @@ def main():
 
     sys.exit(0 if success else 1)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

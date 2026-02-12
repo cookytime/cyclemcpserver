@@ -3,18 +3,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class Config:
     # base44 API settings
-    BASE44_API_KEY = os.getenv('BASE44_API_KEY')
-    BASE44_API_URL = os.getenv('BASE44_API_URL', 'https://app.base44.com/api')
-    BASE44_APP_ID = os.getenv('BASE44_APP_ID')
+    BASE44_API_KEY = os.getenv("BASE44_API_KEY")
+    BASE44_API_URL = os.getenv("BASE44_API_URL", "https://app.base44.com/api")
+    BASE44_APP_ID = os.getenv("BASE44_APP_ID")
 
     # PostgreSQL settings
-    DB_HOST = os.getenv('DB_HOST', 'localhost')
-    DB_PORT = os.getenv('DB_PORT', '5432')
-    DB_NAME = os.getenv('DB_NAME', 'choreography')
-    DB_USER = os.getenv('DB_USER')
-    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv("DB_HOST", "localhost")
+    DB_PORT = os.getenv("DB_PORT", "5432")
+    DB_NAME = os.getenv("DB_NAME", "choreography")
+    DB_USER = os.getenv("DB_USER")
+    DB_PASSWORD = os.getenv("DB_PASSWORD")
 
     @classmethod
     def get_db_connection_string(cls):
@@ -24,10 +25,10 @@ class Config:
     def validate(cls):
         """Validate that all required configuration is present"""
         required = [
-            ('BASE44_API_KEY', cls.BASE44_API_KEY),
-            ('BASE44_APP_ID', cls.BASE44_APP_ID),
-            ('DB_USER', cls.DB_USER),
-            ('DB_PASSWORD', cls.DB_PASSWORD),
+            ("BASE44_API_KEY", cls.BASE44_API_KEY),
+            ("BASE44_APP_ID", cls.BASE44_APP_ID),
+            ("DB_USER", cls.DB_USER),
+            ("DB_PASSWORD", cls.DB_PASSWORD),
         ]
 
         missing = [name for name, value in required if not value]

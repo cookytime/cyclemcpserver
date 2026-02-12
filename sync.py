@@ -7,6 +7,7 @@ from psycopg2.extras import Json
 from datetime import datetime
 from config import Config
 
+
 class Base44Sync:
     def __init__(self):
         Config.validate()
@@ -26,19 +27,12 @@ class Base44Sync:
 
     def fetch_tracks_from_base44(self):
         """Fetch tracks from base44 API"""
-        headers = {
-            'api_key': self.api_key,
-            'Content-Type': 'application/json'
-        }
+        headers = {"api_key": self.api_key, "Content-Type": "application/json"}
 
         try:
             # base44 API endpoint for Track entities
-            url = f'{self.api_url}/apps/{Config.BASE44_APP_ID}/entities/Track'
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=30
-            )
+            url = f"{self.api_url}/apps/{Config.BASE44_APP_ID}/entities/Track"
+            response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             tracks = response.json()
 
@@ -56,36 +50,36 @@ class Base44Sync:
 
         try:
             # Extract track data from base44 API response
-            base44_id = track.get('id')
-            title = track.get('title')
-            artist = track.get('artist')
-            album = track.get('album')
-            duration_minutes = track.get('duration_minutes')
+            base44_id = track.get("id")
+            title = track.get("title")
+            artist = track.get("artist")
+            album = track.get("album")
+            duration_minutes = track.get("duration_minutes")
 
             # Spotify data
-            spotify_id = track.get('spotify_id')
-            spotify_album_art = track.get('spotify_album_art')
-            spotify_url = track.get('spotify_url')
+            spotify_id = track.get("spotify_id")
+            spotify_album_art = track.get("spotify_album_art")
+            spotify_url = track.get("spotify_url")
 
             # Musical characteristics
-            bpm = track.get('bpm')
-            intensity = track.get('intensity')
-            track_type = track.get('track_type')
-            focus_area = track.get('focus_area')
-            position = track.get('position')
+            bpm = track.get("bpm")
+            intensity = track.get("intensity")
+            track_type = track.get("track_type")
+            focus_area = track.get("focus_area")
+            position = track.get("position")
 
             # Cycling-specific
-            base_rpm = track.get('base_rpm')
-            base_effortlevel = track.get('base_effortlevel')
-            resistance_min = track.get('resistance_min')
-            resistance_max = track.get('resistance_max')
-            cadence_min = track.get('cadence_min')
-            cadence_max = track.get('cadence_max')
+            base_rpm = track.get("base_rpm")
+            base_effortlevel = track.get("base_effortlevel")
+            resistance_min = track.get("resistance_min")
+            resistance_max = track.get("resistance_max")
+            cadence_min = track.get("cadence_min")
+            cadence_max = track.get("cadence_max")
 
             # Choreography data
-            choreography = track.get('choreography')
-            cues = track.get('cues')
-            notes = track.get('notes')
+            choreography = track.get("choreography")
+            cues = track.get("cues")
+            notes = track.get("notes")
 
             if not base44_id or not title:
                 print(f"⚠ Skipping track with missing required fields: {track}")
@@ -97,7 +91,8 @@ class Base44Sync:
             cues_json = Json(cues) if cues else None
 
             # Insert or update track
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO tracks (
                     base44_id, title, artist, album, duration_minutes,
                     spotify_id, spotify_album_art, spotify_url,
@@ -133,14 +128,32 @@ class Base44Sync:
                     notes = EXCLUDED.notes,
                     updated_at = CURRENT_TIMESTAMP
                 RETURNING (xmax = 0) AS inserted
-            """, (
-                base44_id, title, artist, album, duration_minutes,
-                spotify_id, spotify_album_art, spotify_url,
-                bpm, intensity, track_type, focus_area, position,
-                base_rpm, base_effortlevel,
-                resistance_min, resistance_max, cadence_min, cadence_max,
-                choreography_json, cues_json, notes
-            ))
+            """,
+                (
+                    base44_id,
+                    title,
+                    artist,
+                    album,
+                    duration_minutes,
+                    spotify_id,
+                    spotify_album_art,
+                    spotify_url,
+                    bpm,
+                    intensity,
+                    track_type,
+                    focus_area,
+                    position,
+                    base_rpm,
+                    base_effortlevel,
+                    resistance_min,
+                    resistance_max,
+                    cadence_min,
+                    cadence_max,
+                    choreography_json,
+                    cues_json,
+                    notes,
+                ),
+            )
 
             result = cursor.fetchone()
             cursor.execute("RELEASE SAVEPOINT track_sync")
@@ -149,7 +162,9 @@ class Base44Sync:
         except Exception as e:
             # Rollback just this track's changes
             cursor.execute("ROLLBACK TO SAVEPOINT track_sync")
-            print(f"✗ Error syncing track '{track.get('title', 'unknown')}' (ID: {track.get('id', 'unknown')}): {e}")
+            print(
+                f"✗ Error syncing track '{track.get('title', 'unknown')}' (ID: {track.get('id', 'unknown')}): {e}"
+            )
             return None
 
     def run_sync(self):
@@ -166,11 +181,14 @@ class Base44Sync:
             cursor = self.conn.cursor()
 
             # Log sync start
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO sync_log (sync_started_at, status)
                 VALUES (%s, 'running')
                 RETURNING id
-            """, (sync_start,))
+            """,
+                (sync_start,),
+            )
             sync_log_id = cursor.fetchone()[0]
             self.conn.commit()
 
@@ -198,7 +216,8 @@ class Base44Sync:
 
             # Update sync log
             sync_end = datetime.now()
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE sync_log
                 SET sync_completed_at = %s,
                     tracks_added = %s,
@@ -206,14 +225,18 @@ class Base44Sync:
                     tracks_total = %s,
                     status = 'completed'
                 WHERE id = %s
-            """, (sync_end, tracks_added, tracks_updated, len(tracks), sync_log_id))
+            """,
+                (sync_end, tracks_added, tracks_updated, len(tracks), sync_log_id),
+            )
             self.conn.commit()
 
             print(f"\n✓ Sync completed successfully!")
             print(f"  - Tracks added: {tracks_added}")
             print(f"  - Tracks updated: {tracks_updated}")
             print(f"  - Total tracks: {len(tracks)}")
-            print(f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds")
+            print(
+                f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds"
+            )
 
             return True
 
@@ -223,12 +246,15 @@ class Base44Sync:
 
             if self.conn:
                 cursor = self.conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE sync_log
                     SET status = 'failed',
                         error_message = %s
                     WHERE id = %s
-                """, (error_message, sync_log_id))
+                """,
+                    (error_message, sync_log_id),
+                )
                 self.conn.commit()
 
             return False
@@ -236,6 +262,7 @@ class Base44Sync:
         finally:
             if self.conn:
                 self.conn.close()
+
 
 def main():
     print("=== Cycle MCP Server Sync ===\n")
@@ -245,5 +272,6 @@ def main():
 
     sys.exit(0 if success else 1)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

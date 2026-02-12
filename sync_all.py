@@ -3,11 +3,13 @@
 Combined sync script that syncs tracks, routines, and track feedback from base44.
 Tracks are synced first so routine-track associations can be properly linked.
 """
+
 import sys
 from datetime import datetime
 from sync import Base44Sync
 from sync_routines import Base44RoutineSync
 from sync_trackfeedback import Base44TrackFeedbackSync
+
 
 def main():
     print("=== Cycle MCP Server Complete Sync ===\n")
@@ -45,5 +47,6 @@ def main():
 
     sys.exit(0 if all_success else 1)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

@@ -11,6 +11,7 @@ Dependencies:
 - requests
 - mcp
 """
+
 import json
 import os
 import re
@@ -114,8 +115,14 @@ async def call_mcp_tool(
 
     try:
         if mcp_bearer:
-            async with httpx.AsyncClient(headers={"Authorization": f"Bearer {mcp_bearer}"}) as http_client:
-                async with streamable_http_client(mcp_url, http_client=http_client) as (read_stream, write_stream, _):
+            async with httpx.AsyncClient(
+                headers={"Authorization": f"Bearer {mcp_bearer}"}
+            ) as http_client:
+                async with streamable_http_client(mcp_url, http_client=http_client) as (
+                    read_stream,
+                    write_stream,
+                    _,
+                ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         result = await session.call_tool(
@@ -131,7 +138,11 @@ async def call_mcp_tool(
                             return {}
                         return json.loads(text)
         else:
-            async with streamable_http_client(mcp_url) as (read_stream, write_stream, _):
+            async with streamable_http_client(mcp_url) as (
+                read_stream,
+                write_stream,
+                _,
+            ):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     result = await session.call_tool(
@@ -157,8 +168,14 @@ async def call_mcp_resource(uri: str) -> Any:
 
     try:
         if mcp_bearer:
-            async with httpx.AsyncClient(headers={"Authorization": f"Bearer {mcp_bearer}"}) as http_client:
-                async with streamable_http_client(mcp_url, http_client=http_client) as (read_stream, write_stream, _):
+            async with httpx.AsyncClient(
+                headers={"Authorization": f"Bearer {mcp_bearer}"}
+            ) as http_client:
+                async with streamable_http_client(mcp_url, http_client=http_client) as (
+                    read_stream,
+                    write_stream,
+                    _,
+                ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         result = await session.read_resource(uri)
@@ -172,7 +189,11 @@ async def call_mcp_resource(uri: str) -> Any:
                             return {}
                         return json.loads(joined)
         else:
-            async with streamable_http_client(mcp_url) as (read_stream, write_stream, _):
+            async with streamable_http_client(mcp_url) as (
+                read_stream,
+                write_stream,
+                _,
+            ):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     result = await session.read_resource(uri)
@@ -284,7 +305,10 @@ Ensure variety, keep pacing aligned with intensity arc, and match the vibe/theme
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-                {"role": "user", "content": f"MCP data context: {json.dumps(context_payload)}"},
+                {
+                    "role": "user",
+                    "content": f"MCP data context: {json.dumps(context_payload)}",
+                },
             ],
         },
         timeout=timeout,
@@ -331,7 +355,10 @@ def build_raw_track_list(
     disliked_artists = {a.lower().strip() for a in feedback.disliked_artists}
 
     def allowed(title: str, artist: str) -> bool:
-        return title.lower().strip() not in disliked_titles and artist.lower().strip() not in disliked_artists
+        return (
+            title.lower().strip() not in disliked_titles
+            and artist.lower().strip() not in disliked_artists
+        )
 
     # Base set from DB (anchor tracks).
     db_tracks: list[dict[str, Any]] = []
@@ -355,7 +382,11 @@ def build_raw_track_list(
             )
 
     # Add OpenAI enrichment tracks only as gap-fill.
-    curated = openai_result.get("curated_playlist") if isinstance(openai_result, dict) else None
+    curated = (
+        openai_result.get("curated_playlist")
+        if isinstance(openai_result, dict)
+        else None
+    )
     ai_tracks: list[dict[str, Any]] = []
     if isinstance(curated, list):
         for item in curated:
@@ -439,7 +470,9 @@ def parse_feedback_signals(up_rows: Any, down_rows: Any) -> FeedbackSignals:
     )
 
 
-def spotify_search_first_track(access_token: str, title: str, artist: str) -> dict[str, Any] | None:
+def spotify_search_first_track(
+    access_token: str, title: str, artist: str
+) -> dict[str, Any] | None:
     resp = requests.get(
         "https://api.spotify.com/v1/search",
         params={"q": f"{title} {artist}", "type": "track", "limit": 1},
@@ -473,7 +506,9 @@ def enrich_tracks_with_spotify(
                 "artist": (hit.get("artists") or [{}])[0].get("name", ""),
                 "album": (hit.get("album") or {}).get("name", ""),
                 "spotify_id": hit.get("id", ""),
-                "spotify_album_art": ((hit.get("album") or {}).get("images") or [{}])[0].get("url"),
+                "spotify_album_art": ((hit.get("album") or {}).get("images") or [{}])[
+                    0
+                ].get("url"),
                 "spotify_url": (hit.get("external_urls") or {}).get("spotify", ""),
                 "duration_minutes": (hit.get("duration_ms") or 0) / 60000,
                 "bpm": track.get("estimated_bpm"),
@@ -507,7 +542,11 @@ def build_routine_payload(
         track_lookup[key] = track
 
     ordered_tracks = flattened_tracks
-    curated = openai_result.get("curated_playlist") if isinstance(openai_result, dict) else None
+    curated = (
+        openai_result.get("curated_playlist")
+        if isinstance(openai_result, dict)
+        else None
+    )
     curated_tracks = curated if isinstance(curated, list) else None
     if isinstance(curated_tracks, list) and curated_tracks:
         selected: list[dict[str, Any]] = []
@@ -536,12 +575,14 @@ def build_routine_payload(
         f"({duration} minutes estimated). Audience: {request_data.audience or 'mixed'}."
     )
     tags = [
-        tag for tag in [
+        tag
+        for tag in [
             "ai-generated",
             difficulty or "",
             request_data.audience or "",
             request_data.theme or "",
-        ] if tag
+        ]
+        if tag
     ]
 
     return RoutinePayload(
@@ -577,11 +618,17 @@ async def generate_playlist(
     except Exception:
         stats = {}
     try:
-        up_rows = await call_mcp_tool("get_top_rated_tracks", {"rating": "up", "audience": request_data.audience, "limit": 50})
+        up_rows = await call_mcp_tool(
+            "get_top_rated_tracks",
+            {"rating": "up", "audience": request_data.audience, "limit": 50},
+        )
     except Exception:
         up_rows = []
     try:
-        down_rows = await call_mcp_tool("get_top_rated_tracks", {"rating": "down", "audience": request_data.audience, "limit": 50})
+        down_rows = await call_mcp_tool(
+            "get_top_rated_tracks",
+            {"rating": "down", "audience": request_data.audience, "limit": 50},
+        )
     except Exception:
         down_rows = []
     feedback = parse_feedback_signals(up_rows, down_rows)
@@ -601,7 +648,9 @@ async def generate_playlist(
 
     openai_result: dict[str, Any]
     try:
-        openai_result = call_openai_playlist_curation(request_data, stats, playlist, feedback)
+        openai_result = call_openai_playlist_curation(
+            request_data, stats, playlist, feedback
+        )
     except Exception as e:
         openai_result = {
             "status": "failed",
@@ -635,11 +684,17 @@ async def generate_tracks(
     except Exception:
         stats = {}
     try:
-        up_rows = await call_mcp_tool("get_top_rated_tracks", {"rating": "up", "audience": request_data.audience, "limit": 50})
+        up_rows = await call_mcp_tool(
+            "get_top_rated_tracks",
+            {"rating": "up", "audience": request_data.audience, "limit": 50},
+        )
     except Exception:
         up_rows = []
     try:
-        down_rows = await call_mcp_tool("get_top_rated_tracks", {"rating": "down", "audience": request_data.audience, "limit": 50})
+        down_rows = await call_mcp_tool(
+            "get_top_rated_tracks",
+            {"rating": "down", "audience": request_data.audience, "limit": 50},
+        )
     except Exception:
         down_rows = []
     feedback = parse_feedback_signals(up_rows, down_rows)
@@ -658,9 +713,13 @@ async def generate_tracks(
         raise HTTPException(status_code=502, detail=f"MCP build failed: {e}") from e
 
     try:
-        openai_result = call_openai_playlist_curation(request_data, stats, playlist, feedback)
+        openai_result = call_openai_playlist_curation(
+            request_data, stats, playlist, feedback
+        )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"OpenAI curation failed: {e}") from e
+        raise HTTPException(
+            status_code=502, detail=f"OpenAI curation failed: {e}"
+        ) from e
 
     raw_tracks = build_raw_track_list(
         openai_result,
