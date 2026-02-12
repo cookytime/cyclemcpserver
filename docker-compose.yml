@@ -95,6 +95,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./:/app
     command: ["python", "sync_all.py"]
 
 volumes:

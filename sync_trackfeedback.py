@@ -50,32 +50,41 @@ class Base44TrackFeedbackSync:
             spotify_id = entry.get('spotify_id') or None
             rating = entry.get('rating') or None
             context = entry.get('context') or None
+            audience = entry.get('audience') or None
 
             if not base44_id or not track_title or not rating:
                 print(f"⚠ Skipping feedback with missing required fields: {entry}")
                 cursor.execute("RELEASE SAVEPOINT feedback_sync")
                 return False
 
+            # `base44_id` may or may not be uniquely constrained depending on migrations.
+            # Use update-then-insert to avoid relying on ON CONFLICT(base44_id).
+            cursor.execute("""
+                UPDATE track_feedback
+                SET track_title = %s,
+                    track_artist = %s,
+                    spotify_id = %s,
+                    rating = %s,
+                    context = %s,
+                    audience = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE base44_id = %s
+            """, (track_title, track_artist, spotify_id, rating, context, audience, base44_id))
+
+            if cursor.rowcount > 0:
+                cursor.execute("RELEASE SAVEPOINT feedback_sync")
+                return False
+
             cursor.execute("""
                 INSERT INTO track_feedback (
                     base44_id, track_title, track_artist, spotify_id,
-                    rating, context, updated_at
+                    rating, context, audience, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (base44_id)
-                DO UPDATE SET
-                    track_title = EXCLUDED.track_title,
-                    track_artist = EXCLUDED.track_artist,
-                    spotify_id = EXCLUDED.spotify_id,
-                    rating = EXCLUDED.rating,
-                    context = EXCLUDED.context,
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING (xmax = 0) AS inserted
-            """, (base44_id, track_title, track_artist, spotify_id, rating, context))
+                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            """, (base44_id, track_title, track_artist, spotify_id, rating, context, audience))
 
-            result = cursor.fetchone()
             cursor.execute("RELEASE SAVEPOINT feedback_sync")
-            return result[0]
+            return True
 
         except Exception as e:
             cursor.execute("ROLLBACK TO SAVEPOINT feedback_sync")
