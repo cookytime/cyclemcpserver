@@ -1,14 +1,29 @@
+# Local environment and secrets
 .env
+
+# Python bytecode and cache artifacts
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Packaging/build outputs
 *.so
 *.egg
 *.egg-info/
 dist/
 build/
+
+# Virtual environments
 venv/
 .venv/
+.venv.broken*/
+
+# Local runtime artifacts
+.logs/
 .run/
