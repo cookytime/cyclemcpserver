@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${DB_USER:-glen}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_v18:/var/lib/postgresql
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./schema_routines.sql:/docker-entrypoint-initdb.d/02-schema_routines.sql:ro
       - ./schema_trackfeedback.sql:/docker-entrypoint-initdb.d/03-schema_trackfeedback.sql:ro
@@ -100,4 +100,4 @@ services:
     command: ["python", "sync_all.py"]
 
 volumes:
-  postgres_data:
+  postgres_data_v18:
