@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,7 +20,10 @@ class Config:
 
     @classmethod
     def get_db_connection_string(cls):
-        return f"host={cls.DB_HOST} port={cls.DB_PORT} dbname={cls.DB_NAME} user={cls.DB_USER} password={cls.DB_PASSWORD}"
+        return (
+            f"host={cls.DB_HOST} port={cls.DB_PORT} dbname={cls.DB_NAME} "
+            f"user={cls.DB_USER} password={cls.DB_PASSWORD}"
+        )
 
     @classmethod
     def validate(cls):

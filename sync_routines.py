@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import sys
-import json
-import requests
-import psycopg2
-from psycopg2.extras import Json
 from datetime import datetime
+
+import psycopg2
+import requests
+from psycopg2.extras import Json
+
 from config import Config
 
 
@@ -144,7 +145,8 @@ class Base44RoutineSync:
             # Rollback just this routine's changes
             cursor.execute("ROLLBACK TO SAVEPOINT routine_sync")
             print(
-                f"✗ Error syncing routine '{routine.get('name', 'unknown')}' (ID: {routine.get('id', 'unknown')}): {e}"
+                f"✗ Error syncing routine '{routine.get('name', 'unknown')}' "
+                f"(ID: {routine.get('id', 'unknown')}): {e}"
             )
             return None
 
@@ -184,7 +186,7 @@ class Base44RoutineSync:
             self.conn.commit()
 
             sync_end = datetime.now()
-            print(f"\n✓ Routine sync completed successfully!")
+            print("\n✓ Routine sync completed successfully!")
             print(f"  - Routines added: {routines_added}")
             print(f"  - Routines updated: {routines_updated}")
             print(f"  - Total routines: {len(routines)}")

@@ -1,0 +1,13 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = [".venv", ".venv.broken-20260212", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+exclude = [".venv", ".venv.broken-20260212", "__pycache__"]

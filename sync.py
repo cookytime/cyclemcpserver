@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import sys
-import json
-import requests
-import psycopg2
-from psycopg2.extras import Json
 from datetime import datetime
+
+import psycopg2
+import requests
+from psycopg2.extras import Json
+
 from config import Config
 
 
@@ -102,7 +103,11 @@ class Base44Sync:
                     choreography, cues, notes,
                     updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    CURRENT_TIMESTAMP
+                )
                 ON CONFLICT (base44_id)
                 DO UPDATE SET
                     title = EXCLUDED.title,
@@ -163,7 +168,8 @@ class Base44Sync:
             # Rollback just this track's changes
             cursor.execute("ROLLBACK TO SAVEPOINT track_sync")
             print(
-                f"✗ Error syncing track '{track.get('title', 'unknown')}' (ID: {track.get('id', 'unknown')}): {e}"
+                f"✗ Error syncing track '{track.get('title', 'unknown')}' "
+                f"(ID: {track.get('id', 'unknown')}): {e}"
             )
             return None
 
@@ -230,7 +236,7 @@ class Base44Sync:
             )
             self.conn.commit()
 
-            print(f"\n✓ Sync completed successfully!")
+            print("\n✓ Sync completed successfully!")
             print(f"  - Tracks added: {tracks_added}")
             print(f"  - Tracks updated: {tracks_updated}")
             print(f"  - Total tracks: {len(tracks)}")

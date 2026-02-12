@@ -6,26 +6,26 @@ Connects to the local PostgreSQL choreography database and provides tools
 for searching tracks, analyzing feedback, and building class playlists.
 """
 
-import os
-import sys
-import json
-import logging
 import argparse
 import hmac
+import json
+import logging
+import os
+import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
-from datetime import datetime, date
 from typing import Any
 
-import requests
 import psycopg2
-from psycopg2.pool import SimpleConnectionPool
-from psycopg2.extras import RealDictCursor
+import requests
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
+from mcp.server.fastmcp import Context, FastMCP
+from psycopg2.extras import RealDictCursor
+from psycopg2.pool import SimpleConnectionPool
 
 # Load .env from the same directory as this script
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
@@ -111,7 +111,8 @@ async def app_lifespan(server: FastMCP):
         pool = SimpleConnectionPool(1, 10, **db_config)
     except Exception as e:
         logger.error(
-            "Database connection failed. Check DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD and that PostgreSQL is reachable."
+            "Database connection failed. Check DB_HOST/DB_PORT/DB_NAME/"
+            "DB_USER/DB_PASSWORD and that PostgreSQL is reachable."
         )
         raise RuntimeError("Failed to initialize PostgreSQL connection pool") from e
     try:
@@ -262,7 +263,8 @@ def suggest_external_tracks_with_openai(
 
     system_prompt = (
         "You are an expert cycling class music programmer. "
-        "Use existing tracks as anchors and suggest only missing tracks to complete a full class arc. "
+        "Use existing tracks as anchors and suggest only missing tracks "
+        "to complete a full class arc. "
         "Never suggest disliked tracks or disliked artists. "
         "Return valid JSON only."
     )
@@ -431,7 +433,8 @@ def search_tracks(
         bpm_min: Minimum BPM (e.g. 100)
         bpm_max: Maximum BPM (e.g. 140)
         intensity: Filter by intensity level (low, medium, high, extreme)
-        track_type: Filter by track type (warmup, climb, sprint, recovery, cooldown, intervals, endurance)
+        track_type: Filter by track type
+            (warmup, climb, sprint, recovery, cooldown, intervals, endurance)
         position: Filter by riding position
         artist: Filter by artist name (partial match)
         focus_area: Filter by focus area (e.g. endurance, strength)
@@ -518,14 +521,16 @@ def suggest_tracks_for_slot(
     are deprioritized, and thumbs-up tracks are boosted.
 
     Args:
-        slot_type: The class slot type (warmup, climb, sprint, recovery, cooldown, intervals, endurance)
+        slot_type: The class slot type
+            (warmup, climb, sprint, recovery, cooldown, intervals, endurance)
         duration_min: Minimum track duration in minutes
         duration_max: Maximum track duration in minutes
         intensity: Preferred intensity (low, medium, high, extreme)
         bpm_min: Minimum BPM
         bpm_max: Maximum BPM
         exclude_titles: Comma-separated track titles to exclude (already in playlist)
-        audience: Target audience demographic (e.g. '50+', 'mixed', 'young') - filters out tracks rated down for this audience
+        audience: Target audience demographic (e.g. '50+', 'mixed', 'young')
+            filters out tracks rated down for this audience
         prefer_top_rated: Rank tracks with thumbs-up feedback higher (default true)
         limit: Maximum results (default 10)
     """
@@ -580,10 +585,19 @@ def suggest_tracks_for_slot(
         audience_cols = ""
         audience_sums = ""
         if audience:
-            audience_cols = ", COALESCE(fb.up_audience, 0) as audience_thumbs_up, COALESCE(fb.down_audience, 0) as audience_thumbs_down"
-            audience_sums = f""",
-                       SUM(CASE WHEN rating = 'up' AND audience = %s THEN 1 ELSE 0 END) as up_audience,
-                       SUM(CASE WHEN rating = 'down' AND audience = %s THEN 1 ELSE 0 END) as down_audience"""
+            audience_cols = (
+                ", COALESCE(fb.up_audience, 0) as audience_thumbs_up, "
+                "COALESCE(fb.down_audience, 0) as audience_thumbs_down"
+            )
+            audience_sums = """,
+                       SUM(
+                           CASE WHEN rating = 'up' AND audience = %s
+                           THEN 1 ELSE 0
+                       END) as up_audience,
+                       SUM(
+                           CASE WHEN rating = 'down' AND audience = %s
+                           THEN 1 ELSE 0
+                       END) as down_audience"""
             all_params = [audience, audience] + params
             all_params.append(min(limit, 50))
         else:
@@ -859,7 +873,8 @@ def build_class_playlist(
         duration_minutes: Target class duration in minutes (default 45)
         difficulty: Preferred difficulty - affects intensity selection
         theme: Optional theme or focus (e.g. 'climb heavy', 'high energy', 'endurance')
-        audience: Target audience demographic (e.g. '50+', 'mixed', 'young') - excludes tracks rated down for this audience
+        audience: Target audience demographic (e.g. '50+', 'mixed', 'young')
+            excludes tracks rated down for this audience
     """
     conn = get_conn(ctx)
     try:
@@ -931,8 +946,14 @@ def build_class_playlist(
             audience_order = ""
             if audience:
                 audience_sums = """,
-                           SUM(CASE WHEN rating = 'down' AND audience = %s THEN 1 ELSE 0 END) as down_audience"""
-                audience_order = "CASE WHEN COALESCE(fb.down_audience, 0) > 0 THEN -1 ELSE 0 END DESC,"
+                           SUM(
+                               CASE WHEN rating = 'down' AND audience = %s
+                               THEN 1 ELSE 0
+                           END) as down_audience"""
+                audience_order = (
+                    "CASE WHEN COALESCE(fb.down_audience, 0) > 0 "
+                    "THEN -1 ELSE 0 END DESC,"
+                )
                 params.append(audience)
 
             params.extend(slot["types"])
@@ -1195,7 +1216,8 @@ def recommend_class_tracks(
     - Excluded genres and songs/artists (comma-separated, optional)
 
     Output shape:
-    - If a suggested track exists in local DB (title+artist), return full DB track schema + suggest_type.
+    - If a suggested track exists in local DB (title+artist),
+      return full DB track schema + suggest_type.
     - Otherwise return: title, artist, bpm, suggest_type.
     """
     conn = get_conn(ctx)
@@ -1560,20 +1582,24 @@ def build_class(
         difficulty: Difficulty level (beginner, intermediate, advanced, expert)
         audience: Target audience demographic (e.g. '50+', 'mixed', 'young')
     """
-    return f"""Help me build a {duration}-minute cycling class at {difficulty} difficulty for a {audience} audience.
+    return f"""Help me build a {duration}-minute cycling class
+at {difficulty} difficulty for a {audience} audience.
 
 Please follow these steps:
 1. First, use the track_stats resource to understand what tracks are available
 2. Use build_class_playlist with audience='{audience}' to generate an initial playlist suggestion
-3. Review the suggestions and use suggest_tracks_for_slot with audience='{audience}' to find alternatives if any slot needs improvement
-4. Check get_top_rated_tracks with audience='{audience}' to see if any highly-rated tracks were missed
+3. Review suggestions and use suggest_tracks_for_slot with audience='{audience}'
+   to find alternatives if any slot needs improvement
+4. Check get_top_rated_tracks with audience='{audience}'
+   to see if any highly-rated tracks were missed
 5. Present the final playlist in order with:
    - Phase/slot name
    - Track title and artist
    - BPM and intensity
    - Duration
    - Any relevant choreography notes
-6. After presenting the playlist, ask if I want to rate any tracks with thumbs up/down using rate_track (with audience='{audience}')
+6. After presenting the playlist, ask if I want to rate tracks with
+   thumbs up/down using rate_track (with audience='{audience}')
 
 Consider:
 - Smooth BPM transitions between consecutive tracks

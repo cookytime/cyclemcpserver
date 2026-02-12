@@ -10,6 +10,29 @@ Sync your music tracks and workout routines from base44 to a local PostgreSQL da
 pip install -r requirements.txt
 ```
 
+For local code quality checks (lint, format, typecheck, tests):
+
+```bash
+pip install -r requirements-dev.txt
+make check
+```
+
+To keep dependency files synchronized:
+
+```bash
+make req-compile   # regenerate requirements*.txt from requirements*.in
+make req-upgrade   # same as above, but upgrades to latest allowed versions
+make req-sync      # sync installed packages to exactly match requirements*.txt
+```
+
+AI first-pass fixer (uses OpenAI API):
+
+```bash
+OPENAI_API_KEY=... make ai-fix
+# dry-run:
+python scripts/ai_fix.py --check-cmd "make check" --iterations 1 --dry-run
+```
+
 ### 2. Configure Environment
 
 Copy the example environment file and fill in your credentials:

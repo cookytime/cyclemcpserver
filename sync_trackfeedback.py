@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import sys
-import requests
-import psycopg2
 from datetime import datetime
+
+import psycopg2
+import requests
+
 from config import Config
 
 
@@ -109,7 +111,9 @@ class Base44TrackFeedbackSync:
         except Exception as e:
             cursor.execute("ROLLBACK TO SAVEPOINT feedback_sync")
             print(
-                f"✗ Error syncing feedback for '{entry.get('track_title', 'unknown')}' (ID: {entry.get('id', 'unknown')}): {e}"
+                f"✗ Error syncing feedback for "
+                f"'{entry.get('track_title', 'unknown')}' "
+                f"(ID: {entry.get('id', 'unknown')}): {e}"
             )
             return None
 
@@ -145,7 +149,7 @@ class Base44TrackFeedbackSync:
             self.conn.commit()
 
             sync_end = datetime.now()
-            print(f"\n✓ Track feedback sync completed successfully!")
+            print("\n✓ Track feedback sync completed successfully!")
             print(f"  - Feedback added: {added}")
             print(f"  - Feedback updated: {updated}")
             print(f"  - Total entries: {len(feedback)}")

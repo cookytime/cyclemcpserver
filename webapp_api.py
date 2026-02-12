@@ -17,14 +17,13 @@ import os
 import re
 from typing import Any
 
-import requests
 import httpx
+import requests
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
-
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from pydantic import BaseModel, Field
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
@@ -230,7 +229,8 @@ def call_openai_playlist_curation(
 
     system_prompt = """You are an expert cycling class music programmer and DJ.
 
-Your job is to curate a structured Spotify-ready track list for a cycling class based on the provided inputs.
+Your job is to curate a structured Spotify-ready track list
+for a cycling class based on the provided inputs.
 
 You must:
 - Use the database-provided track suggestions as primary anchors.
@@ -243,7 +243,8 @@ You must:
 - Avoid artists or genres listed in exclusions.
 - Avoid any tracks/artists listed as disliked feedback.
 - Prefer tracks/artists listed as liked feedback when they fit the arc.
-- Ensure BPM suitability for cycling (generally 80–100 for climbs, 100–130+ for intervals unless stylistically justified).
+- Ensure BPM suitability for cycling
+  (generally 80–100 for climbs, 100–130+ for intervals unless stylistically justified).
 - Create a cohesive emotional and energy journey.
 
 Output Requirements:
@@ -262,18 +263,36 @@ Rules:
 - Prefer recognizable but not overplayed tracks.
 - Match vibe and theme before pure popularity.
 - If preferred artists conflict with excluded genres, respect exclusions.
-- If the theme implies a strong emotional tone (e.g., empowerment, revenge, nostalgia), lean into lyrical content.
+- If the theme implies a strong emotional tone
+  (e.g., empowerment, revenge, nostalgia), lean into lyrical content.
 - Do not explain your reasoning outside the structured list.
 
 Return valid JSON only."""
 
-    user_prompt = f"""Create a playlist of songs for a {request_data.duration_minutes}-minute cycling class.
-Theme: {request_data.theme or 'any'}
-Intensity arc: {request_data.intensity_arc or 'any'}
-Vibe: {request_data.vibe or 'any'}
-Preferred genres: {", ".join(request_data.preferred_genres) if request_data.preferred_genres else "any"}
-Preferred artists: {", ".join(request_data.preferred_artists) if request_data.preferred_artists else "any"}
-Excluded genres: {", ".join(request_data.excluded_genres) if request_data.excluded_genres else "none"}
+    preferred_genres = (
+        ", ".join(request_data.preferred_genres)
+        if request_data.preferred_genres
+        else "any"
+    )
+    preferred_artists = (
+        ", ".join(request_data.preferred_artists)
+        if request_data.preferred_artists
+        else "any"
+    )
+    excluded_genres = (
+        ", ".join(request_data.excluded_genres)
+        if request_data.excluded_genres
+        else "none"
+    )
+
+    user_prompt = f"""Create a playlist of songs for a
+{request_data.duration_minutes}-minute cycling class.
+Theme: {request_data.theme or "any"}
+Intensity arc: {request_data.intensity_arc or "any"}
+Vibe: {request_data.vibe or "any"}
+Preferred genres: {preferred_genres}
+Preferred artists: {preferred_artists}
+Excluded genres: {excluded_genres}
 
 Use the MCP suggestions and metadata as your source list.
 Return a JSON array of tracks with the following fields:
