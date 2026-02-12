@@ -156,6 +156,30 @@ python mcp_server.py --transport streamable-http --host 0.0.0.0 --port 8000
 Default endpoint:
 - `http://localhost:8000/mcp`
 
+### Protect MCP Server (Bearer Auth)
+
+Set these environment variables before starting `mcp_server.py`:
+
+```bash
+MCP_AUTH_BEARER_TOKEN=replace_with_long_random_secret
+MCP_AUTH_SCOPES=mcp:access
+MCP_AUTH_ISSUER_URL=http://127.0.0.1:8000
+MCP_AUTH_RESOURCE_URL=http://127.0.0.1:8000
+```
+
+When enabled, clients must send:
+
+```http
+Authorization: Bearer <MCP_AUTH_BEARER_TOKEN>
+```
+
+Local quick test:
+
+```bash
+curl -i http://127.0.0.1:8000/mcp \
+  -H "Authorization: Bearer replace_with_long_random_secret"
+```
+
 ### Generic MCP Client Config
 
 Most MCP clients support a config shaped like this:
@@ -207,6 +231,7 @@ Edit your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`):
 | `get_top_rated_tracks` | Tracks ranked by your feedback ratings |
 | `get_feedback_summary` | Overview of all your track ratings by context |
 | `build_class_playlist` | Auto-generate a full class playlist with proper workout arc |
+| `build_hybrid_playlist` | Build full playlist using DB tracks first, then OpenAI gap-fill, filtered by feedback |
 | `list_routines` | Browse your existing routines/classes |
 
 ### Example Queries
@@ -257,3 +282,131 @@ print(response.json())
 ```
 
 Then update the field names in `sync_track()` accordingly.
+
+## Service Wrapper (Start/Stop Both)
+
+Use `manage_services.sh` to run both MCP server and Web API together.
+
+```bash
+# Start both services
+./manage_services.sh start
+
+# Check status
+./manage_services.sh status
+
+# View logs
+./manage_services.sh logs
+./manage_services.sh logs mcp
+./manage_services.sh logs web
+
+# Stop both services
+./manage_services.sh stop
+```
+
+Default ports:
+- MCP: `127.0.0.1:8000`
+- Web API: `0.0.0.0:8080`
+
+Override with env vars:
+
+```bash
+MCP_HOST=0.0.0.0 MCP_PORT=8000 WEBAPI_PORT=8081 ./manage_services.sh start
+```
+
+## Web API (MCP + OpenAI)
+
+This repo includes a web backend (`webapp_api.py`) that:
+- requires an `X-API-Key` header
+- calls your MCP server for track suggestions
+- optionally calls OpenAI to curate a final list from MCP suggestions
+- returns a `routine` object aligned to `routine_schema.json`
+
+### Install Web API Dependencies
+
+```bash
+pip install -r requirements_webapi.txt
+```
+
+### Required Environment Variables
+
+Add these to `.env`:
+
+```bash
+# Protects /api/playlist
+WEBAPP_API_KEY=replace_with_your_secret_key
+
+# MCP server endpoint (streamable-http transport)
+MCP_SERVER_URL=http://127.0.0.1:8000/mcp
+MCP_SERVER_BEARER_TOKEN=replace_with_long_random_secret
+
+# OpenAI
+OPENAI_API_KEY=replace_with_openai_key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+### Start MCP Server (HTTP)
+
+```bash
+python mcp_server.py --transport streamable-http --host 127.0.0.1 --port 8000
+```
+
+### Start Web API
+
+```bash
+uvicorn webapp_api:app --host 0.0.0.0 --port 8080
+```
+
+### Test Endpoint
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/playlist \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: replace_with_your_secret_key" \
+  -d '{
+    "duration_minutes": 45,
+    "difficulty": "intermediate",
+    "audience": "mixed",
+    "theme": "high energy",
+    "intensity_arc": "Warmup -> Build -> Peak -> Recovery -> Cooldown",
+    "vibe": "empowerment",
+    "preferred_genres": ["edm", "pop"],
+    "preferred_artists": ["Dua Lipa"],
+    "excluded_genres": ["country"],
+    "user_goal": "Build a class with smooth transitions and a strong peak section."
+  }'
+```
+
+Response is the routine object directly (schema-aligned).
+
+To include debug internals (`mcp_playlist`, `openai`, request snapshot), set:
+- `"debug": true`
+
+`track_ids` precedence:
+1. `spotify:{spotify_id}`
+2. `base44:{base44_id}`
+3. `db:{id}`
+4. fallback slug if no IDs are present
+
+### Track List Endpoint (TypeScript-style)
+
+If your frontend wants a direct `tracks` payload similar to your TS function, call:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/tracks \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: replace_with_your_secret_key" \
+  -d '{
+    "duration_minutes": 45,
+    "theme": "high energy",
+    "intensity_arc": "Warmup -> Build -> Peak -> Recovery -> Cooldown",
+    "vibe": "empowerment",
+    "preferred_genres": ["edm", "pop"],
+    "preferred_artists": ["Dua Lipa"],
+    "excluded_genres": ["country"],
+    "spotify_access_token": "optional_spotify_user_token"
+  }'
+```
+
+Response:
+- `{ "tracks": [...] }`
+- If `spotify_access_token` is provided, returns Spotify-enriched track objects.

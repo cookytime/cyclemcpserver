@@ -10,24 +10,33 @@ import sys
 import json
 import logging
 import argparse
+import hmac
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime, date
+from typing import Any
 
 import requests
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 
 # Load .env from the same directory as this script
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
+# Log level from env (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+LOG_LEVEL = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
+if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    LOG_LEVEL = "INFO"
+
 # Configure logging to stderr (stdout is reserved for STDIO transport)
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     stream=sys.stderr
 )
@@ -54,6 +63,28 @@ class AppContext:
     base44_api_key: str
     base44_api_url: str
     base44_app_id: str
+
+
+class StaticBearerTokenVerifier:
+    """Simple bearer-token verifier for MCP HTTP transports."""
+
+    def __init__(self, expected_token: str, client_id: str, scopes: list[str]):
+        self.expected_token = expected_token
+        self.client_id = client_id
+        self.scopes = scopes
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not self.expected_token:
+            return None
+        if not hmac.compare_digest(token, self.expected_token):
+            return None
+        return AccessToken(
+            token=token,
+            client_id=self.client_id,
+            scopes=self.scopes,
+            expires_at=None,
+            resource=None,
+        )
 
 
 @asynccontextmanager
@@ -95,27 +126,268 @@ async def app_lifespan(server: FastMCP):
         logger.info("Database pool closed.")
 
 
+# Optional MCP HTTP auth
+_auth_token = os.getenv("MCP_AUTH_BEARER_TOKEN", "").strip()
+_auth_scopes = [s.strip() for s in os.getenv("MCP_AUTH_SCOPES", "mcp:access").split(",") if s.strip()]
+_auth_issuer_url = os.getenv("MCP_AUTH_ISSUER_URL", "http://127.0.0.1:8000")
+_auth_resource_url = os.getenv("MCP_AUTH_RESOURCE_URL", "http://127.0.0.1:8000")
+
+_auth_settings = None
+_token_verifier = None
+if _auth_token:
+    _auth_settings = AuthSettings(
+        issuer_url=_auth_issuer_url,
+        resource_server_url=_auth_resource_url,
+        required_scopes=_auth_scopes,
+    )
+    _token_verifier = StaticBearerTokenVerifier(
+        expected_token=_auth_token,
+        client_id=os.getenv("MCP_AUTH_CLIENT_ID", "authorized-client"),
+        scopes=_auth_scopes,
+    )
+    logger.info("MCP HTTP auth enabled (Bearer token + scopes=%s).", ",".join(_auth_scopes))
+
 # Initialize FastMCP server
 mcp = FastMCP(
     "choreography-db",
     lifespan=app_lifespan,
+    log_level=LOG_LEVEL,
     host=os.getenv("MCP_HOST", "127.0.0.1"),
     port=int(os.getenv("MCP_PORT", "8000")),
     mount_path=os.getenv("MCP_MOUNT_PATH", "/"),
     sse_path=os.getenv("MCP_SSE_PATH", "/sse"),
     message_path=os.getenv("MCP_MESSAGE_PATH", "/messages/"),
     streamable_http_path=os.getenv("MCP_HTTP_PATH", "/mcp"),
+    auth=_auth_settings,
+    token_verifier=_token_verifier,
 )
 
 
-def get_conn(ctx):
+def get_conn(ctx: Context):
     """Get a connection from the pool."""
     return ctx.request_context.lifespan_context.db_pool.getconn()
 
 
-def put_conn(ctx, conn):
+def put_conn(ctx: Context, conn):
     """Return a connection to the pool."""
     ctx.request_context.lifespan_context.db_pool.putconn(conn)
+
+
+def normalize_track_key(title: str | None, artist: str | None) -> str:
+    t = (title or "").strip().lower()
+    a = (artist or "").strip().lower()
+    return f"{t}|{a}"
+
+
+def derive_target_track_count(duration_minutes: int, explicit_target: int | None) -> int:
+    if explicit_target is not None:
+        return max(5, min(30, explicit_target))
+    if duration_minutes <= 30:
+        return 10
+    if duration_minutes <= 45:
+        return 12
+    return 15
+
+
+def fetch_feedback_signals(conn, audience: str | None = None) -> dict[str, list[str]]:
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if audience:
+            cur.execute(
+                """
+                SELECT track_title, track_artist, rating
+                FROM track_feedback
+                WHERE audience = %s OR audience IS NULL OR audience = ''
+                """,
+                (audience,),
+            )
+        else:
+            cur.execute("SELECT track_title, track_artist, rating FROM track_feedback")
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+
+    liked_titles: set[str] = set()
+    liked_artists: set[str] = set()
+    disliked_titles: set[str] = set()
+    disliked_artists: set[str] = set()
+
+    for row in rows:
+        title = (row.get("track_title") or "").strip()
+        artist = (row.get("track_artist") or "").strip()
+        rating = (row.get("rating") or "").strip().lower()
+        if rating == "up":
+            if title:
+                liked_titles.add(title)
+            if artist:
+                liked_artists.add(artist)
+        elif rating == "down":
+            if title:
+                disliked_titles.add(title)
+            if artist:
+                disliked_artists.add(artist)
+
+    return {
+        "liked_titles": sorted(liked_titles),
+        "liked_artists": sorted(liked_artists),
+        "disliked_titles": sorted(disliked_titles),
+        "disliked_artists": sorted(disliked_artists),
+    }
+
+
+def suggest_external_tracks_with_openai(
+    duration_minutes: int,
+    difficulty: str | None,
+    theme: str | None,
+    audience: str | None,
+    needed_count: int,
+    existing_tracks: list[dict[str, Any]],
+    feedback_signals: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key or needed_count <= 0:
+        return []
+
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    timeout = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "45"))
+
+    system_prompt = (
+        "You are an expert cycling class music programmer. "
+        "Use existing tracks as anchors and suggest only missing tracks to complete a full class arc. "
+        "Never suggest disliked tracks or disliked artists. "
+        "Return valid JSON only."
+    )
+    user_payload = {
+        "target_duration_minutes": duration_minutes,
+        "difficulty": difficulty,
+        "theme": theme,
+        "audience": audience,
+        "needed_count": needed_count,
+        "existing_tracks": existing_tracks,
+        "feedback_signals": feedback_signals,
+        "required_output_format": {
+            "tracks": [
+                {
+                    "title": "string",
+                    "artist": "string",
+                    "estimated_bpm": 120,
+                    "focus_area": "warmup|build|climb|sprint|recovery|cooldown",
+                    "notes": "string",
+                }
+            ]
+        },
+    }
+
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "response_format": {"type": "json_object"},
+            "temperature": 0.3,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    parsed = json.loads(content)
+
+    if isinstance(parsed, list):
+        tracks = parsed
+    elif isinstance(parsed, dict) and isinstance(parsed.get("tracks"), list):
+        tracks = parsed["tracks"]
+    else:
+        tracks = []
+
+    clean: list[dict[str, Any]] = []
+    for item in tracks:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        artist = str(item.get("artist") or "").strip()
+        if not title or not artist:
+            continue
+        clean.append(
+            {
+                "title": title,
+                "artist": artist,
+                "estimated_bpm": item.get("estimated_bpm"),
+                "focus_area": str(item.get("focus_area") or "build").strip().lower(),
+                "notes": str(item.get("notes") or "").strip(),
+            }
+        )
+    return clean
+
+
+def focus_area_to_phase_name(focus_area: str) -> str:
+    value = (focus_area or "").lower()
+    if "warm" in value:
+        return "Warmup"
+    if "cool" in value:
+        return "Cooldown"
+    if "recover" in value:
+        return "Recovery"
+    if "sprint" in value:
+        return "Peak 2"
+    if "climb" in value:
+        return "Peak 1"
+    if "build" in value or "endur" in value or "interval" in value:
+        return "Build"
+    return "Build"
+
+
+def add_track_to_phase(playlist: list[dict[str, Any]], phase_name: str, track: dict[str, Any]) -> None:
+    for phase in playlist:
+        if phase.get("phase") == phase_name:
+            phase.setdefault("tracks", []).append(track)
+            return
+    playlist.append({"phase": phase_name, "suggested_types": [], "tracks": [track]})
+
+
+def parse_csv_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def infer_default_arc(duration_minutes: int) -> list[str]:
+    if duration_minutes <= 30:
+        return ["warmup", "build", "climb", "sprint", "cooldown"]
+    if duration_minutes <= 45:
+        return ["warmup", "build", "climb", "recovery", "sprint", "cooldown"]
+    return ["warmup", "build", "climb", "recovery", "climb", "sprint", "cooldown"]
+
+
+def normalize_arc_types(custom_intensity_arc: str | None, duration_minutes: int) -> list[str]:
+    provided = [s.lower() for s in parse_csv_list(custom_intensity_arc)]
+    if not provided:
+        return infer_default_arc(duration_minutes)
+
+    normalized: list[str] = []
+    for item in provided:
+        if "warm" in item:
+            normalized.append("warmup")
+        elif "cool" in item:
+            normalized.append("cooldown")
+        elif "recover" in item:
+            normalized.append("recovery")
+        elif "sprint" in item:
+            normalized.append("sprint")
+        elif "climb" in item:
+            normalized.append("climb")
+        elif "build" in item or "endur" in item or "interval" in item:
+            normalized.append("build")
+        else:
+            normalized.append("build")
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +396,7 @@ def put_conn(ctx, conn):
 
 @mcp.tool()
 def search_tracks(
-    ctx,
+    ctx: Context,
     bpm_min: float | None = None,
     bpm_max: float | None = None,
     intensity: str | None = None,
@@ -209,7 +481,7 @@ def search_tracks(
 
 @mcp.tool()
 def suggest_tracks_for_slot(
-    ctx,
+    ctx: Context,
     slot_type: str,
     duration_min: float | None = None,
     duration_max: float | None = None,
@@ -299,7 +571,8 @@ def suggest_tracks_for_slot(
                        0 as down_audience"""
 
         cur.execute(f"""
-            SELECT t.title, t.artist, t.bpm, t.intensity, t.track_type,
+            SELECT t.id, t.spotify_id,
+                   t.title, t.artist, t.bpm, t.intensity, t.track_type,
                    t.duration_minutes, t.position, t.focus_area,
                    t.resistance_min, t.resistance_max,
                    t.cadence_min, t.cadence_max,
@@ -330,7 +603,7 @@ def suggest_tracks_for_slot(
 
 @mcp.tool()
 def find_similar_tracks(
-    ctx,
+    ctx: Context,
     track_title: str,
     bpm_tolerance: float = 15,
     limit: int = 10,
@@ -399,7 +672,7 @@ def find_similar_tracks(
 
 
 @mcp.tool()
-def get_track_details(ctx, track_title: str) -> str:
+def get_track_details(ctx: Context, track_title: str) -> str:
     """Get full details of a track including choreography cues.
 
     Returns all information about a track: metadata, cycling parameters,
@@ -429,7 +702,7 @@ def get_track_details(ctx, track_title: str) -> str:
 
 @mcp.tool()
 def get_top_rated_tracks(
-    ctx,
+    ctx: Context,
     context: str | None = None,
     audience: str | None = None,
     rating: str = "up",
@@ -485,7 +758,7 @@ def get_top_rated_tracks(
 
 
 @mcp.tool()
-def get_feedback_summary(ctx) -> str:
+def get_feedback_summary(ctx: Context) -> str:
     """Get a summary of all track feedback grouped by context and rating.
 
     Returns an overview of how many tracks have been rated up/down
@@ -530,7 +803,7 @@ def get_feedback_summary(ctx) -> str:
 
 @mcp.tool()
 def build_class_playlist(
-    ctx,
+    ctx: Context,
     duration_minutes: int = 45,
     difficulty: str | None = None,
     theme: str | None = None,
@@ -630,7 +903,8 @@ def build_class_playlist(
             params.append(slot['count'])
 
             cur.execute(f"""
-                SELECT t.title, t.artist, t.bpm, t.intensity, t.track_type,
+                SELECT t.id, t.spotify_id,
+                       t.title, t.artist, t.bpm, t.intensity, t.track_type,
                        t.duration_minutes, t.position, t.focus_area,
                        t.resistance_min, t.resistance_max,
                        t.cadence_min, t.cadence_max,
@@ -688,8 +962,364 @@ def build_class_playlist(
 
 
 @mcp.tool()
+def build_hybrid_playlist(
+    ctx: Context,
+    duration_minutes: int = 45,
+    difficulty: str | None = None,
+    theme: str | None = None,
+    audience: str | None = None,
+    target_tracks: int | None = None,
+) -> str:
+    """Build a full playlist using DB anchors plus OpenAI gap-fill suggestions.
+
+    This tool:
+    1) Builds a base playlist from local DB tracks.
+    2) Applies feedback filters to remove disliked tracks/artists.
+    3) Uses OpenAI to suggest additional tracks only when DB coverage is short.
+    4) Returns a merged, ordered playlist.
+    """
+    base_raw = build_class_playlist(
+        ctx,
+        duration_minutes=duration_minutes,
+        difficulty=difficulty,
+        theme=theme,
+        audience=audience,
+    )
+    base = json.loads(base_raw)
+    playlist = base.get("playlist", []) if isinstance(base, dict) else []
+
+    conn = get_conn(ctx)
+    try:
+        feedback = fetch_feedback_signals(conn, audience=audience)
+    finally:
+        put_conn(ctx, conn)
+
+    disliked_titles = {t.lower().strip() for t in feedback.get("disliked_titles", [])}
+    disliked_artists = {a.lower().strip() for a in feedback.get("disliked_artists", [])}
+
+    def allowed(track: dict[str, Any]) -> bool:
+        title = str(track.get("title") or "").lower().strip()
+        artist = str(track.get("artist") or "").lower().strip()
+        if not title or not artist:
+            return False
+        if title in disliked_titles or artist in disliked_artists:
+            return False
+        return True
+
+    db_tracks_flat: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for phase in playlist:
+        tracks = phase.get("tracks", []) or []
+        filtered: list[dict[str, Any]] = []
+        for track in tracks:
+            if not isinstance(track, dict) or not allowed(track):
+                continue
+            key = normalize_track_key(track.get("title"), track.get("artist"))
+            if key in seen:
+                continue
+            seen.add(key)
+            t = dict(track)
+            t["source"] = "db"
+            filtered.append(t)
+            db_tracks_flat.append(
+                {
+                    "title": t.get("title"),
+                    "artist": t.get("artist"),
+                    "bpm": t.get("bpm"),
+                    "track_type": t.get("track_type"),
+                    "phase": phase.get("phase"),
+                }
+            )
+        phase["tracks"] = filtered
+
+    desired_count = derive_target_track_count(duration_minutes, target_tracks)
+    needed_count = max(0, desired_count - len(db_tracks_flat))
+
+    ai_tracks = suggest_external_tracks_with_openai(
+        duration_minutes=duration_minutes,
+        difficulty=difficulty,
+        theme=theme,
+        audience=audience,
+        needed_count=needed_count,
+        existing_tracks=db_tracks_flat,
+        feedback_signals=feedback,
+    )
+
+    added_ai = 0
+    for item in ai_tracks:
+        if added_ai >= needed_count:
+            break
+        title = item.get("title")
+        artist = item.get("artist")
+        key = normalize_track_key(title, artist)
+        if key in seen:
+            continue
+        if str(title).lower().strip() in disliked_titles:
+            continue
+        if str(artist).lower().strip() in disliked_artists:
+            continue
+        seen.add(key)
+        track = {
+            "id": None,
+            "spotify_id": None,
+            "title": title,
+            "artist": artist,
+            "bpm": item.get("estimated_bpm"),
+            "intensity": "medium",
+            "track_type": item.get("focus_area"),
+            "duration_minutes": None,
+            "position": None,
+            "focus_area": item.get("focus_area"),
+            "resistance_min": None,
+            "resistance_max": None,
+            "cadence_min": None,
+            "cadence_max": None,
+            "spotify_url": None,
+            "thumbs_up": 0,
+            "thumbs_down": 0,
+            "notes": item.get("notes"),
+            "source": "ai",
+        }
+        add_track_to_phase(playlist, focus_area_to_phase_name(str(item.get("focus_area") or "")), track)
+        added_ai += 1
+
+    tracks_flat: list[dict[str, Any]] = []
+    for phase in playlist:
+        for track in phase.get("tracks", []) or []:
+            t = dict(track)
+            t["phase"] = phase.get("phase")
+            tracks_flat.append(t)
+
+    total_duration = sum((t.get("duration_minutes") or 0) for t in tracks_flat)
+    result = {
+        "target_duration": duration_minutes,
+        "estimated_duration": round(total_duration, 1),
+        "difficulty": difficulty,
+        "theme": theme,
+        "target_track_count": desired_count,
+        "db_track_count": len(db_tracks_flat),
+        "ai_track_count": added_ai,
+        "total_tracks": len(tracks_flat),
+        "feedback_signals": feedback,
+        "playlist": playlist,
+        "tracks": tracks_flat,
+    }
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def recommend_class_tracks(
+    ctx: Context,
+    class_length_minutes: int = 55,
+    theme: str | None = None,
+    vibe: str | None = None,
+    custom_intensity_arc: str | None = None,
+    preferred_genres: str | None = None,
+    preferred_artists: str | None = None,
+    exclude_genres: str | None = None,
+    exclude_songs_or_artists: str | None = None,
+    audience: str | None = None,
+) -> str:
+    """Return class-ready track suggestions with BPM, suggested type, and duration.
+
+    Inputs mirror UI fields:
+    - Class length
+    - Theme / vibe
+    - Custom intensity arc (comma-separated, optional)
+    - Preferred genres/artists (comma-separated, optional)
+    - Excluded genres and songs/artists (comma-separated, optional)
+    """
+    conn = get_conn(ctx)
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        preferred_genre_list = [g.lower() for g in parse_csv_list(preferred_genres)]
+        preferred_artist_list = parse_csv_list(preferred_artists)
+        excluded_genre_list = [g.lower() for g in parse_csv_list(exclude_genres)]
+        excluded_song_artist_list = parse_csv_list(exclude_songs_or_artists)
+        arc = normalize_arc_types(custom_intensity_arc, class_length_minutes)
+
+        # Track count target (about 3.5-4.5 minutes average per song)
+        target_count = max(8, min(20, round(class_length_minutes / 4)))
+        if len(arc) < target_count:
+            repeats = (target_count + len(arc) - 1) // len(arc)
+            arc = (arc * repeats)[:target_count]
+        else:
+            arc = arc[:target_count]
+
+        # Feedback signals for ranking and filtering.
+        feedback = fetch_feedback_signals(conn, audience=audience)
+        disliked_titles = {t.lower().strip() for t in feedback.get("disliked_titles", [])}
+        disliked_artists = {a.lower().strip() for a in feedback.get("disliked_artists", [])}
+
+        used: set[str] = set()
+        results: list[dict[str, Any]] = []
+
+        for slot_type in arc:
+            conditions = []
+            params: list[Any] = []
+
+            # Slot type guidance first.
+            if slot_type == "build":
+                conditions.append("(track_type ILIKE %s OR track_type ILIKE %s)")
+                params.extend(["%endurance%", "%interval%"])
+            else:
+                conditions.append("track_type ILIKE %s")
+                params.append(f"%{slot_type}%")
+
+            if theme:
+                conditions.append("(title ILIKE %s OR artist ILIKE %s OR notes ILIKE %s OR focus_area ILIKE %s)")
+                th = f"%{theme}%"
+                params.extend([th, th, th, th])
+            if vibe:
+                conditions.append("(notes ILIKE %s OR focus_area ILIKE %s OR intensity ILIKE %s)")
+                vb = f"%{vibe}%"
+                params.extend([vb, vb, vb])
+
+            # "Genres" are approximated using notes/focus_area/track_type text fields.
+            for g in preferred_genre_list:
+                conditions.append("(notes ILIKE %s OR focus_area ILIKE %s OR track_type ILIKE %s)")
+                like = f"%{g}%"
+                params.extend([like, like, like])
+
+            for artist in preferred_artist_list:
+                conditions.append("artist ILIKE %s")
+                params.append(f"%{artist}%")
+
+            for g in excluded_genre_list:
+                conditions.append("(COALESCE(notes,'') NOT ILIKE %s AND COALESCE(focus_area,'') NOT ILIKE %s AND COALESCE(track_type,'') NOT ILIKE %s)")
+                like = f"%{g}%"
+                params.extend([like, like, like])
+
+            for ex in excluded_song_artist_list:
+                conditions.append("(title NOT ILIKE %s AND artist NOT ILIKE %s)")
+                like = f"%{ex}%"
+                params.extend([like, like])
+
+            where = " AND ".join(conditions) if conditions else "TRUE"
+
+            cur.execute(
+                f"""
+                SELECT t.id, t.title, t.artist, t.bpm, t.duration_minutes, t.track_type, t.spotify_id, t.spotify_url,
+                       COALESCE(fb.up_count, 0) as thumbs_up,
+                       COALESCE(fb.down_count, 0) as thumbs_down
+                FROM tracks t
+                LEFT JOIN (
+                    SELECT track_title,
+                           SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
+                           SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count
+                    FROM track_feedback
+                    GROUP BY track_title
+                ) fb ON fb.track_title = t.title
+                WHERE {where}
+                ORDER BY
+                    CASE WHEN COALESCE(fb.down_count, 0) > COALESCE(fb.up_count, 0) THEN 1 ELSE 0 END,
+                    COALESCE(fb.up_count, 0) DESC,
+                    RANDOM()
+                LIMIT 20
+                """,
+                params,
+            )
+            candidates = serialize_rows(cur.fetchall())
+
+            picked = None
+            for c in candidates:
+                key = normalize_track_key(str(c.get("title")), str(c.get("artist")))
+                if key in used:
+                    continue
+                if str(c.get("title", "")).lower().strip() in disliked_titles:
+                    continue
+                if str(c.get("artist", "")).lower().strip() in disliked_artists:
+                    continue
+                picked = c
+                break
+
+            if not picked:
+                continue
+
+            used.add(normalize_track_key(str(picked.get("title")), str(picked.get("artist"))))
+            results.append(
+                {
+                    "title": picked.get("title"),
+                    "artist": picked.get("artist"),
+                    "bpm": picked.get("bpm"),
+                    "suggest_type": slot_type,
+                    "duration_minutes": picked.get("duration_minutes"),
+                    "spotify_id": picked.get("spotify_id"),
+                    "spotify_url": picked.get("spotify_url"),
+                    "source": "db",
+                }
+            )
+
+        # Gap-fill using OpenAI when DB coverage is short.
+        needed_count = max(0, target_count - len(results))
+        ai_added = 0
+        if needed_count > 0:
+            ai_tracks = suggest_external_tracks_with_openai(
+                duration_minutes=class_length_minutes,
+                difficulty=None,
+                theme=theme,
+                audience=audience,
+                needed_count=needed_count,
+                existing_tracks=results,
+                feedback_signals=feedback,
+            )
+
+            # Keep exclusion matching simple and strict.
+            excluded_tokens = [x.lower() for x in excluded_song_artist_list]
+
+            for t in ai_tracks:
+                if ai_added >= needed_count:
+                    break
+                title = str(t.get("title") or "").strip()
+                artist = str(t.get("artist") or "").strip()
+                if not title or not artist:
+                    continue
+                title_lower = title.lower()
+                artist_lower = artist.lower()
+                key = normalize_track_key(title, artist)
+                if key in used:
+                    continue
+                if title_lower in disliked_titles or artist_lower in disliked_artists:
+                    continue
+                if any(token and (token in title_lower or token in artist_lower) for token in excluded_tokens):
+                    continue
+
+                used.add(key)
+                results.append(
+                    {
+                        "title": title,
+                        "artist": artist,
+                        "bpm": t.get("estimated_bpm"),
+                        "suggest_type": str(t.get("focus_area") or "build").lower(),
+                        "duration_minutes": None,
+                        "spotify_id": None,
+                        "spotify_url": None,
+                        "source": "ai",
+                    }
+                )
+                ai_added += 1
+
+        total_duration = sum((r.get("duration_minutes") or 0) for r in results)
+        return json.dumps(
+            {
+                "class_length_minutes": class_length_minutes,
+                "target_track_count": target_count,
+                "returned_track_count": len(results),
+                "db_track_count": len([r for r in results if r.get("source") == "db"]),
+                "ai_track_count": len([r for r in results if r.get("source") == "ai"]),
+                "estimated_duration_minutes": round(total_duration, 1),
+                "tracks": results,
+            },
+            indent=2,
+        )
+    finally:
+        put_conn(ctx, conn)
+
+
+@mcp.tool()
 def list_routines(
-    ctx,
+    ctx: Context,
     difficulty: str | None = None,
     limit: int = 20,
 ) -> str:
@@ -739,7 +1369,7 @@ def list_routines(
 
 @mcp.tool()
 def rate_track(
-    ctx,
+    ctx: Context,
     track_title: str,
     rating: str,
     context: str | None = None,
