@@ -1,0 +1,74 @@
+{
+  "name": "TrackFeedback",
+  "type": "object",
+  "properties": {
+    "track_title": {
+      "type": "string",
+      "description": "Track title"
+    },
+    "track_artist": {
+      "type": "string",
+      "description": "Track artist"
+    },
+    "spotify_id": {
+      "type": "string",
+      "description": "Spotify track ID"
+    },
+    "rating": {
+      "type": "string",
+      "enum": [
+        "up",
+        "down"
+      ],
+      "description": "User rating"
+    },
+    "context": {
+      "type": "string",
+      "description": "Context where used (e.g., warmup, climb, etc.)"
+    }
+  },
+  "required": [
+    "track_title",
+    "track_artist",
+    "rating"
+  ],
+  "rls": {
+    "create": true,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

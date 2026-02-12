@@ -56,18 +56,19 @@ class Base44RoutineSync:
 
         try:
             # Extract routine data from base44 API response
+            # Convert empty strings to None for cleaner database storage
             base44_id = routine.get('id')
-            name = routine.get('name')
-            description = routine.get('description')
-            theme = routine.get('theme')
-            intensity_arc = routine.get('intensity_arc')
-            resistance_scale_notes = routine.get('resistance_scale_notes')
-            class_summary = routine.get('class_summary')
-            total_duration_minutes = routine.get('total_duration_minutes')
-            difficulty = routine.get('difficulty')
-            spotify_playlist_id = routine.get('spotify_playlist_id')
-            track_ids = routine.get('track_ids', [])
-            tags = routine.get('tags', [])
+            name = routine.get('name') or None
+            description = routine.get('description') or None
+            theme = routine.get('theme') or None
+            intensity_arc = routine.get('intensity_arc') or None
+            resistance_scale_notes = routine.get('resistance_scale_notes') or None
+            class_summary = routine.get('class_summary') or None
+            total_duration_minutes = routine.get('total_duration_minutes') or None
+            difficulty = routine.get('difficulty') or None
+            spotify_playlist_id = routine.get('spotify_playlist_id') or None
+            track_ids = routine.get('track_ids') or []
+            tags = routine.get('tags') or []
 
             if not base44_id or not name:
                 print(f"⚠ Skipping routine with missing required fields: {routine}")
