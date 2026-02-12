@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS track_feedback (
     -- Feedback
     rating VARCHAR(10) NOT NULL,
     context VARCHAR(255),
+    audience VARCHAR(100),
 
     -- Timestamps
     synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -23,3 +24,4 @@ CREATE INDEX IF NOT EXISTS idx_track_feedback_base44_id ON track_feedback(base44
 CREATE INDEX IF NOT EXISTS idx_track_feedback_rating ON track_feedback(rating);
 CREATE INDEX IF NOT EXISTS idx_track_feedback_spotify_id ON track_feedback(spotify_id);
 CREATE INDEX IF NOT EXISTS idx_track_feedback_context ON track_feedback(context);
+CREATE INDEX IF NOT EXISTS idx_track_feedback_audience ON track_feedback(audience);

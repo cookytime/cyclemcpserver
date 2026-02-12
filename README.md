@@ -107,19 +107,67 @@ Explore your data with the example queries:
 - **[example_queries.sql](example_queries.sql)** - Track queries (BPM ranges, intensity, choreography cues)
 - **[example_queries_routines.sql](example_queries_routines.sql)** - Routine queries (workout planning, track usage, stats)
 
-## Next Steps
+## MCP Server
 
-Once you have tracks and routines synced, you can:
+The MCP server lets Claude help you build and refine cycling class playlists by querying your track database.
 
-1. **Set up an MCP server** to query and analyze your choreography database
-2. **Build workout plans** by querying routines by difficulty, duration, or theme
-3. **Analyze track usage** across routines to identify popular tracks
-4. **Query choreography cues** to refine your class structure
-5. **Schedule regular syncs** using cron or systemd timers:
-   ```bash
-   # Add to crontab: sync every day at 2am
-   0 2 * * * cd /path/to/base44sync && python sync_all.py >> sync.log 2>&1
-   ```
+### Install MCP Dependencies
+
+```bash
+pip install -r requirements_mcp.txt
+```
+
+### Add to Claude Code CLI
+
+```bash
+claude mcp add choreography-db -- python /home/glen/Documents/Projects/base44sync/mcp_server.py
+```
+
+### Add to Claude Desktop
+
+Edit your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "choreography-db": {
+      "command": "python",
+      "args": ["/home/glen/Documents/Projects/base44sync/mcp_server.py"]
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | What It Does |
+|------|--------------|
+| `search_tracks` | Find tracks by BPM, intensity, type, position, artist, keyword |
+| `suggest_tracks_for_slot` | Get best tracks for a class slot (warmup, climb, etc.) ranked by feedback |
+| `find_similar_tracks` | Find alternatives to a track based on BPM and intensity |
+| `get_track_details` | Full track info including choreography cues |
+| `get_top_rated_tracks` | Tracks ranked by your feedback ratings |
+| `get_feedback_summary` | Overview of all your track ratings by context |
+| `build_class_playlist` | Auto-generate a full class playlist with proper workout arc |
+| `list_routines` | Browse your existing routines/classes |
+
+### Example Queries
+
+Once connected, ask Claude things like:
+- "Build me a 45-minute intermediate cycling class"
+- "Find me high-energy climb tracks around 130 BPM"
+- "What are my top-rated sprint tracks?"
+- "Find tracks similar to 'Everybody Everybody' for a warmup slot"
+- "Show me all my existing routines"
+
+## Scheduling Syncs
+
+Keep your database up to date with a cron job:
+
+```bash
+# Add to crontab: sync every day at 2am
+0 2 * * * cd /path/to/base44sync && python sync_all.py >> sync.log 2>&1
+```
 
 ## Troubleshooting
 
