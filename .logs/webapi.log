@@ -372,3 +372,4 @@ INFO:     192.168.1.4:57824 - "GET /favicon.ico/sellers.json HTTP/1.1" 404 Not F
 INFO:     192.168.1.4:37528 - "GET /favicon.ico/ads.txt HTTP/1.1" 404 Not Found
 INFO:     192.168.1.4:37532 - "GET /favicon.ico/app-ads.txt HTTP/1.1" 404 Not Found
 INFO:     192.168.1.4:37540 - "GET /favicon.ico/sellers.json HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46830 - "GET / HTTP/1.1" 404 Not Found

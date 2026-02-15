@@ -33,7 +33,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from psycopg2.extras import Json
-from pydantic import BaseModel, Field
+from pydantic import AnyUrl, BaseModel, Field
 
 from config import Config
 
@@ -313,7 +313,10 @@ def upsert_track_choreography(track: dict[str, Any], base44_id: str) -> dict[str
                         base44_id,
                     ),
                 )
-                track_id = cur.fetchone()[0]
+                row = cur.fetchone()
+                if row is None:
+                    raise RuntimeError(f"Failed to update track {base44_id}.")
+                track_id = row[0]
                 conn.commit()
                 return {"action": "updated", "track_id": track_id}
 
@@ -348,7 +351,10 @@ def upsert_track_choreography(track: dict[str, Any], base44_id: str) -> dict[str
                     notes,
                 ),
             )
-            track_id = cur.fetchone()[0]
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError(f"Failed to insert track {base44_id}.")
+            track_id = row[0]
             conn.commit()
             return {"action": "inserted", "track_id": track_id}
     finally:
@@ -516,6 +522,8 @@ def upsert_routine(
                 ),
             )
             row = cur.fetchone()
+            if row is None:
+                raise RuntimeError(f"Failed to insert or update routine {base44_id}.")
             routine_id = row[0]
             was_inserted = bool(row[1])
 
@@ -701,7 +709,7 @@ async def call_mcp_resource(uri: str) -> Any:
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
-                        result = await session.read_resource(uri)
+                        result = await session.read_resource(AnyUrl(uri))
                         chunks: list[str] = []
                         for block in getattr(result, "contents", []) or []:
                             text = getattr(block, "text", None)
@@ -719,7 +727,7 @@ async def call_mcp_resource(uri: str) -> Any:
             ):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
-                    result = await session.read_resource(uri)
+                    result = await session.read_resource(AnyUrl(uri))
                     chunks: list[str] = []
                     for block in getattr(result, "contents", []) or []:
                         text = getattr(block, "text", None)
