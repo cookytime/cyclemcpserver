@@ -100,3 +100,275 @@ INFO:     Started server process [851498]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     Started server process [66164]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     192.168.1.4:53418 - "POST /api/v1/choreography/updated HTTP/1.1" 400 Bad Request
+INFO:     192.168.1.4:50316 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46738 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46748 - "GET / HTTP/1.1" 404 Not Found
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [66164]
+INFO:     Started server process [67739]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+Rejected webhook with bad signature from 192.168.1.4
+INFO:     192.168.1.4:56332 - "POST /api/v1/choreography/updated HTTP/1.1" 401 Unauthorized
+INFO:     192.168.1.4:42132 - "GET / HTTP/1.1" 404 Not Found
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [67739]
+INFO:     Started server process [68628]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     192.168.1.4:51562 - "POST /api/v1/choreography/updated HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [68628]
+INFO:     Started server process [72296]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     Started server process [72548]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+Rejected webhook with bad signature from 192.168.1.4
+INFO:     192.168.1.4:53028 - "POST /api/v1/choreography/updated HTTP/1.1" 401 Unauthorized
+INFO:     192.168.1.4:59978 - "GET /api/v1/choreography/updated HTTP/1.1" 405 Method Not Allowed
+INFO:     192.168.1.4:52064 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:52074 - "GET /docs HTTP/1.1" 200 OK
+INFO:     192.168.1.4:52082 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     192.168.1.4:38268 - "POST /api/v1/choreography/updated HTTP/1.1" 400 Bad Request
+INFO:     192.168.1.4:51314 - "POST /api/v1/choreography/updated/api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:53020 - "POST /api/v1/choreography/updated/api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:45212 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:45222 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:45226 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:45232 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:45248 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35328 - "POST /api/v1/choreography/updated/api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:32846 - "POST //api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:60904 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:39752 - "POST //api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:39274 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:54856 - "GET /docs HTTP/1.1" 200 OK
+INFO:     192.168.1.4:54870 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     192.168.1.4:38376 - "POST //api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:49750 - "POST /api/v1/routine/updated HTTP/1.1" 200 OK
+INFO:     192.168.1.4:36760 - "POST /api/v1/choreography/updated HTTP/1.1" 200 OK
+INFO:     192.168.1.4:36436 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:36452 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:40180 - "HEAD / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:40188 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:40190 - "HEAD /_next HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:33026 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:42836 - "GET /robots.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:42848 - "GET /robots.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:42858 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:59502 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:49592 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46014 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46000 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46024 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46032 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46034 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46042 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46046 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46048 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46054 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46056 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46058 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46068 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46072 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46074 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46094 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46088 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46108 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46100 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46124 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46140 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:37570 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:47324 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:36090 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:50016 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:50026 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:50040 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51146 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51162 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:49022 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:54506 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:54512 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:53932 - "HEAD / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:47184 - "GET /robots.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:47188 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35642 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35644 - "GET /js/twint_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35646 - "GET /css/support_parent.css HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35650 - "GET /js/lkk_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:48676 - "GET /.git/config HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:58884 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34418 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34426 - "GET /index.html HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34434 - "GET /checkout HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34436 - "GET /.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34438 - "GET /api/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34444 - "GET /.env.vite HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34456 - "GET /backend/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34472 - "GET /laravel/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34474 - "GET /payment/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34476 - "GET /admin/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34484 - "GET /.env.example HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34500 - "GET /core/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34510 - "GET /env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34514 - "GET /stripe/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34530 - "GET /.env.production HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34534 - "GET /.env.bak HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34546 - "GET /.env.local HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34552 - "GET /assets/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34564 - "GET /app/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34568 - "GET /config.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34574 - "GET /docker/.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34588 - "GET /config.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34600 - "GET /config.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34606 - "GET /main.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34616 - "GET /main.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34628 - "GET /env.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34636 - "GET /env.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34644 - "GET /app.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34646 - "GET /app.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34662 - "GET /constants.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34672 - "GET /constants.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34686 - "GET /bundle.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34698 - "GET /bundle.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34712 - "GET /index.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34724 - "GET /index.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34730 - "GET /%40vite/client HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34742 - "GET /__env.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34748 - "GET /__env.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34756 - "GET /vendor.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34758 - "GET /vendor.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34774 - "GET /stripe.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34776 - "GET /stripe.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34792 - "GET /checkout.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34802 - "GET /checkout.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34812 - "GET /payment.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34822 - "GET /payment.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34838 - "GET /sw.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34840 - "GET /sw.js.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34846 - "GET /config.json HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34860 - "GET /config.json.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34862 - "GET /env.json HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34874 - "GET /env.json.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34888 - "GET /.vite/manifest.json HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34890 - "GET /.vite/manifest.json.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34900 - "GET /.git/config HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34916 - "GET /.git/HEAD HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34932 - "GET /wp-config.php.bak HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34944 - "GET /wp-config.php.old HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34956 - "GET /wp-config.php.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34960 - "GET /wp-config.php.save HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34972 - "GET /wp-config.php~ HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34976 - "GET /wp-content/debug.log HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34986 - "GET /.env.dev HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34988 - "GET /.env.staging HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34992 - "GET /.env.backup HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:34996 - "GET /.env.old HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35010 - "GET /.env.save HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35016 - "GET /credentials.json HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35026 - "GET /credentials.json.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35040 - "GET /.vscode/sftp.json HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35046 - "GET /.vscode/sftp.json.map HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35058 - "GET /docker-compose.yml HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35062 - "GET /actuator/env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35068 - "GET /actuator/configprops HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41550 - "GET /manage/env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41566 - "GET /manage/configprops HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41572 - "GET /api/actuator/env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41578 - "GET /admin/actuator/env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41592 - "GET /v1/actuator/env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41600 - "GET /v2/actuator/env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41616 - "GET /configprops HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41624 - "GET /api/config HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41640 - "GET /api/settings HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41656 - "GET /api/env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41670 - "GET /api/stripe HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41682 - "GET /api/keys HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41692 - "GET /api/payment/config HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41702 - "GET /dashboard HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41704 - "GET /admin HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41716 - "GET /admin/settings HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41718 - "GET /settings HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41722 - "GET /_ignition/health-check HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41724 - "GET /__cve_probe_cve_test_404 HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41740 - "GET /telescope/requests HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41748 - "GET /horizon/api/stats HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41752 - "GET /_profiler HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41764 - "GET /_profiler/latest HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41770 - "GET /_profiler/open?file=.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41778 - "GET /app_dev.php/_profiler HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41784 - "GET /app_dev.php HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41794 - "GET /_wdt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41804 - "GET /__cve_probe_cve_test_404 HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41810 - "GET /__debug__/ HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41812 - "GET /webpack-dev-server HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41826 - "GET /__webpack_dev_server__/sockjs-node/info HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41842 - "GET /__cve_probe_cve_test_404 HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41850 - "GET /info.php HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41866 - "GET /phpinfo.php HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41878 - "GET /test.php HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41884 - "GET /i.php HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41890 - "GET /php_info.php HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41894 - "GET /api/v1/namespaces/default/secrets HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41898 - "GET /graphql?query={__schema{types{name,fields{name}}}} HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41914 - "GET /server-status HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41926 - "GET /server-info HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:43858 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:43870 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41190 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:41200 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:59942 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:59954 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:40710 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:40724 - "GET /css/support_parent.css HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:40730 - "GET /js/lkk_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:40734 - "GET /js/twint_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:38950 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:38954 - "GET /js/lkk_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:38960 - "GET /css/support_parent.css HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:38974 - "GET /js/twint_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:47006 - "GET /robots.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:45396 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:45402 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:52418 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:52422 - "GET /js/twint_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:52428 - "GET /js/lkk_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:52440 - "GET /css/support_parent.css HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:47426 - "GET /.env HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:32886 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:32888 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:32890 - "GET /favicon.png HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:55376 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:55386 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:55402 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51818 - "HEAD / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51830 - "HEAD / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51846 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51858 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51872 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51884 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:54156 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:54158 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:57816 - "GET /favicon.ico/ads.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:57822 - "GET /favicon.ico/app-ads.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:57824 - "GET /favicon.ico/sellers.json HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:37528 - "GET /favicon.ico/ads.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:37532 - "GET /favicon.ico/app-ads.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:37540 - "GET /favicon.ico/sellers.json HTTP/1.1" 404 Not Found

@@ -26,8 +26,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     base_effortlevel INTEGER,
     resistance_min DECIMAL(10, 2),
     resistance_max DECIMAL(10, 2),
-    cadence_min DECIMAL(10, 2),
-    cadence_max DECIMAL(10, 2),
+    rpm DECIMAL(10, 2),
 
     -- Choreography data (structured as JSON for rich querying)
     choreography JSONB,

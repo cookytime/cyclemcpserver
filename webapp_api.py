@@ -15,17 +15,37 @@ Dependencies:
 import json
 import os
 import re
+import time
+import hmac
+import base64
+import hashlib
+import asyncio
+import logging
+from contextlib import asynccontextmanager
 from typing import Any
+from pathlib import Path
 
 import httpx
+import psycopg2
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from psycopg2.extras import Json
 from pydantic import BaseModel, Field
 
+from config import Config
+
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+logger = logging.getLogger("cycle-webapi")
+
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
+WEBHOOK_MAX_SKEW_SECONDS = int(os.getenv("WEBHOOK_MAX_SKEW_SECONDS", "300"))
+WEBHOOK_STATE_FILE = Path(
+    os.getenv("WEBHOOK_STATE_FILE", ".run/webhook_state.json")
+).expanduser()
+WEBHOOK_MAX_EVENT_IDS = int(os.getenv("WEBHOOK_MAX_EVENT_IDS", "5000"))
 
 
 class PlaylistRequest(BaseModel):
@@ -66,6 +86,104 @@ class FeedbackSignals(BaseModel):
     disliked_artists: list[str] = Field(default_factory=list)
 
 
+class ChoreographyWebhookEvent(BaseModel):
+    event: str
+    choreography_id: str
+    version: int
+    updated_at: str
+    mode: str = "notify"
+    payload: dict[str, Any] | None = None
+    source: str | None = None
+
+
+class RoutineWebhookEvent(BaseModel):
+    event: str
+    routine_id: str
+    version: int
+    updated_at: str
+    mode: str = "notify"
+    payload: dict[str, Any] | None = None
+    source: str | None = None
+
+
+class WebhookStateStore:
+    def __init__(self, path: Path, max_event_ids: int = 5000):
+        self.path = path
+        self.max_event_ids = max_event_ids
+        self._lock = asyncio.Lock()
+        self._event_ids_order: list[str] = []
+        self._event_ids_seen: set[str] = set()
+        self._latest_versions: dict[str, int] = {}
+        self._loaded = False
+
+    def _load_locked(self) -> None:
+        if self._loaded:
+            return
+
+        if self.path.exists():
+            try:
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+            except Exception:
+                raw = {}
+        else:
+            raw = {}
+
+        ids = raw.get("event_ids") if isinstance(raw, dict) else []
+        versions = raw.get("latest_versions") if isinstance(raw, dict) else {}
+
+        if isinstance(ids, list):
+            clean_ids = [str(item) for item in ids if isinstance(item, str)]
+            self._event_ids_order = clean_ids[-self.max_event_ids :]
+            self._event_ids_seen = set(self._event_ids_order)
+
+        if isinstance(versions, dict):
+            normalized: dict[str, int] = {}
+            for key, value in versions.items():
+                try:
+                    normalized[str(key)] = int(value)
+                except Exception:
+                    continue
+            self._latest_versions = normalized
+
+        self._loaded = True
+
+    def _save_locked(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "event_ids": self._event_ids_order[-self.max_event_ids :],
+            "latest_versions": self._latest_versions,
+        }
+        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    async def classify_and_mark(
+        self, event_id: str, choreography_id: str, version: int
+    ) -> str:
+        async with self._lock:
+            self._load_locked()
+
+            if event_id in self._event_ids_seen:
+                return "duplicate"
+
+            latest = self._latest_versions.get(choreography_id)
+            if latest is not None and version <= latest:
+                return "stale"
+
+            self._event_ids_order.append(event_id)
+            self._event_ids_seen.add(event_id)
+            if len(self._event_ids_order) > self.max_event_ids:
+                drop = self._event_ids_order.pop(0)
+                self._event_ids_seen.discard(drop)
+
+            self._latest_versions[choreography_id] = version
+            self._save_locked()
+            return "accepted"
+
+
+webhook_state_store = WebhookStateStore(WEBHOOK_STATE_FILE, WEBHOOK_MAX_EVENT_IDS)
+webhook_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+webhook_worker_task: asyncio.Task[None] | None = None
+
+
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     expected = os.getenv("WEBAPP_API_KEY", "")
     if not expected:
@@ -75,6 +193,412 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         )
     if x_api_key != expected:
         raise HTTPException(status_code=401, detail="Invalid API key.")
+
+
+def require_webhook_signature(
+    request: Request,
+    raw_body: bytes,
+    x_webhook_timestamp: str | None,
+    x_webhook_signature: str | None,
+) -> None:
+    if not WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="Server is missing WEBHOOK_SECRET configuration.",
+        )
+
+    if not x_webhook_timestamp or not x_webhook_signature:
+        raise HTTPException(status_code=401, detail="Missing webhook signature headers.")
+
+    try:
+        timestamp = int(x_webhook_timestamp)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid webhook timestamp header.") from exc
+
+    now = int(time.time())
+    if abs(now - timestamp) > WEBHOOK_MAX_SKEW_SECONDS:
+        raise HTTPException(status_code=401, detail="Webhook timestamp outside allowed window.")
+
+    signed_payload = f"{x_webhook_timestamp}.".encode("utf-8") + raw_body
+    expected_hex = hmac.new(
+        WEBHOOK_SECRET.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+    expected_b64 = hmac.new(
+        WEBHOOK_SECRET.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).digest()
+    expected_b64_text = base64.b64encode(expected_b64).decode("utf-8")
+
+    raw_sig = x_webhook_signature.strip()
+    candidates: list[str] = []
+    if "=" in raw_sig:
+        _, rhs = raw_sig.split("=", 1)
+        candidates.append(rhs.strip())
+    if ":" in raw_sig:
+        _, rhs = raw_sig.split(":", 1)
+        candidates.append(rhs.strip())
+    candidates.append(raw_sig)
+
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    supplied_values = [s for s in candidates if s and not (s in seen or seen.add(s))]
+
+    if not any(
+        hmac.compare_digest(expected_hex, supplied)
+        or hmac.compare_digest(expected_b64_text, supplied)
+        for supplied in supplied_values
+    ):
+        client = request.client.host if request.client else "unknown"
+        logger.warning("Rejected webhook with bad signature from %s", client)
+        raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+
+
+def fetch_track_by_base44_id(base44_id: str) -> dict[str, Any]:
+    headers = {"api_key": Config.BASE44_API_KEY or "", "Content-Type": "application/json"}
+    list_url = f"{Config.BASE44_API_URL}/apps/{Config.BASE44_APP_ID}/entities/Track"
+    detail_url = f"{list_url}/{base44_id}"
+
+    if not Config.BASE44_API_KEY or not Config.BASE44_APP_ID:
+        raise RuntimeError("Missing BASE44_API_KEY or BASE44_APP_ID for notify mode.")
+
+    detail_resp = requests.get(detail_url, headers=headers, timeout=30)
+    if detail_resp.ok:
+        body = detail_resp.json()
+        if isinstance(body, dict):
+            return body
+
+    list_resp = requests.get(list_url, headers=headers, timeout=30)
+    list_resp.raise_for_status()
+    rows = list_resp.json()
+    if not isinstance(rows, list):
+        raise RuntimeError("Unexpected base44 Track list response.")
+
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("id", "")).strip() == base44_id:
+            return row
+
+    raise RuntimeError(f"Track {base44_id} not found in base44.")
+
+
+def upsert_track_choreography(track: dict[str, Any], base44_id: str) -> dict[str, Any]:
+    choreography = track.get("choreography")
+    cues = track.get("cues")
+    notes = track.get("notes")
+
+    conn = psycopg2.connect(Config.get_db_connection_string())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM tracks WHERE base44_id = %s", (base44_id,))
+            row = cur.fetchone()
+
+            if row:
+                cur.execute(
+                    """
+                    UPDATE tracks
+                    SET choreography = %s,
+                        cues = %s,
+                        notes = COALESCE(%s, notes),
+                        synced_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE base44_id = %s
+                    RETURNING id
+                    """,
+                    (
+                        Json(choreography) if choreography is not None else None,
+                        Json(cues) if cues is not None else None,
+                        notes,
+                        base44_id,
+                    ),
+                )
+                track_id = cur.fetchone()[0]
+                conn.commit()
+                return {"action": "updated", "track_id": track_id}
+
+            title = str(track.get("title") or "").strip()
+            if not title:
+                raise RuntimeError(
+                    f"Track {base44_id} not found locally and payload missing title for insert."
+                )
+
+            cur.execute(
+                """
+                INSERT INTO tracks (
+                    base44_id,
+                    title,
+                    artist,
+                    choreography,
+                    cues,
+                    notes,
+                    synced_at,
+                    updated_at,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
+                """,
+                (
+                    base44_id,
+                    title,
+                    track.get("artist"),
+                    Json(choreography) if choreography is not None else None,
+                    Json(cues) if cues is not None else None,
+                    notes,
+                ),
+            )
+            track_id = cur.fetchone()[0]
+            conn.commit()
+            return {"action": "inserted", "track_id": track_id}
+    finally:
+        conn.close()
+
+
+def resolve_push_payload(base44_id: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+    if payload is None:
+        raise RuntimeError("push mode requires payload.")
+
+    if isinstance(payload.get("track"), dict):
+        track = payload["track"]
+    else:
+        track = payload
+
+    if not isinstance(track, dict):
+        raise RuntimeError("Invalid push payload: expected object.")
+
+    if track.get("id") is None:
+        track = {**track, "id": base44_id}
+
+    return track
+
+
+def fetch_routine_by_base44_id(base44_id: str) -> dict[str, Any]:
+    headers = {"api_key": Config.BASE44_API_KEY or "", "Content-Type": "application/json"}
+    list_url = f"{Config.BASE44_API_URL}/apps/{Config.BASE44_APP_ID}/entities/Routine"
+    detail_url = f"{list_url}/{base44_id}"
+
+    if not Config.BASE44_API_KEY or not Config.BASE44_APP_ID:
+        raise RuntimeError("Missing BASE44_API_KEY or BASE44_APP_ID for notify mode.")
+
+    detail_resp = requests.get(detail_url, headers=headers, timeout=30)
+    if detail_resp.ok:
+        body = detail_resp.json()
+        if isinstance(body, dict):
+            return body
+
+    list_resp = requests.get(list_url, headers=headers, timeout=30)
+    list_resp.raise_for_status()
+    rows = list_resp.json()
+    if not isinstance(rows, list):
+        raise RuntimeError("Unexpected base44 Routine list response.")
+
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("id", "")).strip() == base44_id:
+            return row
+
+    raise RuntimeError(f"Routine {base44_id} not found in base44.")
+
+
+def resolve_push_routine_payload(
+    base44_id: str, payload: dict[str, Any] | None
+) -> dict[str, Any]:
+    if payload is None:
+        raise RuntimeError("push mode requires payload.")
+
+    if isinstance(payload.get("routine"), dict):
+        routine = payload["routine"]
+    else:
+        routine = payload
+
+    if not isinstance(routine, dict):
+        raise RuntimeError("Invalid push payload: expected object.")
+
+    if routine.get("id") is None:
+        routine = {**routine, "id": base44_id}
+
+    return routine
+
+
+def extract_track_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            tid = item.strip()
+            if tid:
+                out.append(tid)
+            continue
+        if isinstance(item, dict):
+            for key in ("id", "base44_id", "track_base44_id"):
+                candidate = item.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    out.append(candidate.strip())
+                    break
+    return out
+
+
+def upsert_routine(
+    routine: dict[str, Any], base44_id: str, replace_tracks: bool = True
+) -> dict[str, Any]:
+    name = routine.get("name") or None
+    description = routine.get("description") or None
+    theme = routine.get("theme") or None
+    intensity_arc = routine.get("intensity_arc") or None
+    resistance_scale_notes = routine.get("resistance_scale_notes") or None
+    class_summary = routine.get("class_summary") or None
+    total_duration_minutes = routine.get("total_duration_minutes") or None
+    difficulty = routine.get("difficulty") or None
+    spotify_playlist_id = routine.get("spotify_playlist_id") or None
+    tags = routine.get("tags")
+    tags_json = Json(tags) if isinstance(tags, list) else None
+    track_ids = extract_track_ids(routine.get("track_ids"))
+
+    conn = psycopg2.connect(Config.get_db_connection_string())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name
+                FROM routines
+                WHERE base44_id = %s
+                """,
+                (base44_id,),
+            )
+            existing = cur.fetchone()
+            existing_name = existing[1] if existing else None
+            effective_name = name or existing_name
+            if not effective_name:
+                raise RuntimeError(
+                    f"Routine {base44_id} missing required field 'name' for insert."
+                )
+
+            cur.execute(
+                """
+                INSERT INTO routines (
+                    base44_id, name, description, theme, intensity_arc,
+                    resistance_scale_notes, class_summary, total_duration_minutes,
+                    difficulty, spotify_playlist_id, tags, synced_at, updated_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                ON CONFLICT (base44_id)
+                DO UPDATE SET
+                    name = COALESCE(EXCLUDED.name, routines.name),
+                    description = COALESCE(EXCLUDED.description, routines.description),
+                    theme = COALESCE(EXCLUDED.theme, routines.theme),
+                    intensity_arc = COALESCE(EXCLUDED.intensity_arc, routines.intensity_arc),
+                    resistance_scale_notes = COALESCE(EXCLUDED.resistance_scale_notes, routines.resistance_scale_notes),
+                    class_summary = COALESCE(EXCLUDED.class_summary, routines.class_summary),
+                    total_duration_minutes = COALESCE(EXCLUDED.total_duration_minutes, routines.total_duration_minutes),
+                    difficulty = COALESCE(EXCLUDED.difficulty, routines.difficulty),
+                    spotify_playlist_id = COALESCE(EXCLUDED.spotify_playlist_id, routines.spotify_playlist_id),
+                    tags = COALESCE(EXCLUDED.tags, routines.tags),
+                    synced_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id, (xmax = 0) AS inserted
+                """,
+                (
+                    base44_id,
+                    effective_name,
+                    description,
+                    theme,
+                    intensity_arc,
+                    resistance_scale_notes,
+                    class_summary,
+                    total_duration_minutes,
+                    difficulty,
+                    spotify_playlist_id,
+                    tags_json,
+                ),
+            )
+            row = cur.fetchone()
+            routine_id = row[0]
+            was_inserted = bool(row[1])
+
+            if replace_tracks:
+                cur.execute("DELETE FROM routine_tracks WHERE routine_id = %s", (routine_id,))
+                for order, track_base44_id in enumerate(track_ids, start=1):
+                    cur.execute(
+                        "SELECT id FROM tracks WHERE base44_id = %s",
+                        (track_base44_id,),
+                    )
+                    trow = cur.fetchone()
+                    track_id = trow[0] if trow else None
+                    cur.execute(
+                        """
+                        INSERT INTO routine_tracks (routine_id, track_base44_id, track_id, track_order)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (routine_id, track_base44_id, track_id, order),
+                    )
+
+            conn.commit()
+            return {
+                "action": "inserted" if was_inserted else "updated",
+                "routine_id": routine_id,
+                "track_count": len(track_ids) if replace_tracks else None,
+            }
+    finally:
+        conn.close()
+
+
+async def process_webhook_job(job: dict[str, Any]) -> None:
+    entity = job.get("entity", "track")
+    mode = job["mode"]
+    payload = job["payload"]
+
+    if entity == "routine":
+        routine_id = job["routine_id"]
+        if mode == "push":
+            routine = resolve_push_routine_payload(routine_id, payload)
+            replace_tracks = "track_ids" in routine
+        else:
+            routine = await asyncio.to_thread(fetch_routine_by_base44_id, routine_id)
+            replace_tracks = True
+        result = await asyncio.to_thread(upsert_routine, routine, routine_id, replace_tracks)
+        logger.info(
+            "Processed routine webhook: id=%s version=%s mode=%s action=%s",
+            routine_id,
+            job["version"],
+            mode,
+            result.get("action"),
+        )
+        return
+
+    choreography_id = job["choreography_id"]
+    if mode == "push":
+        track = resolve_push_payload(choreography_id, payload)
+    else:
+        track = await asyncio.to_thread(fetch_track_by_base44_id, choreography_id)
+
+    result = await asyncio.to_thread(upsert_track_choreography, track, choreography_id)
+    logger.info(
+        "Processed choreography webhook: id=%s version=%s mode=%s action=%s",
+        choreography_id,
+        job["version"],
+        mode,
+        result.get("action"),
+    )
+
+
+async def webhook_worker() -> None:
+    while True:
+        job = await webhook_queue.get()
+        try:
+            await process_webhook_job(job)
+        except Exception:
+            logger.exception(
+                "Webhook job failed for entity=%s id=%s version=%s",
+                job.get("entity", "track"),
+                job.get("choreography_id") or job.get("routine_id"),
+                job.get("version"),
+            )
+        finally:
+            webhook_queue.task_done()
 
 
 def extract_mcp_text(result: Any) -> str:
@@ -619,15 +1143,73 @@ def build_routine_payload(
     )
 
 
-app = FastAPI(title="Cycle MCP Server Web API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    global webhook_worker_task
+    if webhook_worker_task is None or webhook_worker_task.done():
+        webhook_worker_task = asyncio.create_task(webhook_worker())
+    try:
+        yield
+    finally:
+        if webhook_worker_task is None:
+            return
+        webhook_worker_task.cancel()
+        try:
+            await webhook_worker_task
+        except asyncio.CancelledError:
+            pass
+        webhook_worker_task = None
 
 
-@app.get("/health")
+app = FastAPI(
+    title="Cycle MCP Server Web API",
+    version="0.1.0",
+    summary="API for playlist generation and choreography sync webhooks.",
+    description=(
+        "Combines MCP playlist generation, optional OpenAI curation, and "
+        "Base44 choreography update webhooks."
+    ),
+    openapi_tags=[
+        {
+            "name": "health",
+            "description": "Service liveness checks.",
+        },
+        {
+            "name": "playlist",
+            "description": "Generate class routines and track lists.",
+        },
+        {
+            "name": "webhooks",
+            "description": "Inbound Base44 webhook endpoints.",
+        },
+    ],
+    lifespan=lifespan,
+)
+
+
+@app.get(
+    "/health",
+    tags=["health"],
+    summary="Health check",
+    description="Returns service liveness status.",
+)
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/playlist")
+@app.post(
+    "/api/playlist",
+    tags=["playlist"],
+    summary="Generate routine payload",
+    description=(
+        "Builds a routine payload using MCP playlist generation and optional OpenAI "
+        "curation. Requires `X-API-Key`."
+    ),
+    responses={
+        401: {"description": "Missing or invalid X-API-Key."},
+        502: {"description": "Upstream MCP/OpenAI failure."},
+    },
+)
 async def generate_playlist(
     request_data: PlaylistRequest,
     _auth: None = Depends(require_api_key),
@@ -693,7 +1275,19 @@ async def generate_playlist(
     return routine_payload
 
 
-@app.post("/api/tracks")
+@app.post(
+    "/api/tracks",
+    tags=["playlist"],
+    summary="Generate track list",
+    description=(
+        "Builds a structured track list suitable for Spotify enrichment. "
+        "Requires `X-API-Key`."
+    ),
+    responses={
+        401: {"description": "Missing or invalid X-API-Key."},
+        502: {"description": "Upstream MCP/OpenAI failure."},
+    },
+)
 async def generate_tracks(
     request_data: PlaylistRequest,
     _auth: None = Depends(require_api_key),
@@ -761,3 +1355,211 @@ async def generate_tracks(
             },
         }
     return {"tracks": tracks}
+
+
+@app.post(
+    "/api/v1/choreography/updated",
+    tags=["webhooks"],
+    summary="Receive choreography update webhook",
+    description=(
+        "Receives `choreography.updated` events, verifies HMAC signature, applies "
+        "idempotency and version checks, then queues async processing."
+    ),
+    responses={
+        200: {"description": "Accepted or duplicate event."},
+        400: {"description": "Invalid payload."},
+        401: {"description": "Invalid or missing webhook signature/timestamp."},
+        409: {"description": "Stale choreography version."},
+    },
+)
+async def choreography_updated_webhook(
+    request: Request,
+    x_webhook_id: str | None = Header(
+        default=None,
+        description="Optional unique event ID for deduplication.",
+    ),
+    x_webhook_timestamp: str | None = Header(
+        default=None,
+        description="Unix timestamp used in webhook signature verification.",
+    ),
+    x_webhook_signature: str | None = Header(
+        default=None,
+        description=(
+            "HMAC signature. Accepted formats: `sha256=<hex>`, `v1=<hex>`, "
+            "`sha256:<hex>`, raw hex, or base64 digest."
+        ),
+    ),
+) -> dict[str, Any]:
+    raw_body = await request.body()
+    require_webhook_signature(
+        request=request,
+        raw_body=raw_body,
+        x_webhook_timestamp=x_webhook_timestamp,
+        x_webhook_signature=x_webhook_signature,
+    )
+
+    try:
+        event_data = json.loads(raw_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
+
+    try:
+        event = ChoreographyWebhookEvent.model_validate(event_data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}") from exc
+
+    if event.event != "choreography.updated":
+        raise HTTPException(status_code=400, detail="Unsupported event.")
+
+    mode = event.mode.strip().lower()
+    if mode not in {"notify", "push"}:
+        raise HTTPException(status_code=400, detail="mode must be 'notify' or 'push'.")
+
+    if mode == "push" and event.payload is None:
+        raise HTTPException(status_code=400, detail="push mode requires payload.")
+
+    event_id = (x_webhook_id or "").strip()
+    if not event_id:
+        for key in ("event_id", "webhook_id", "id"):
+            candidate = event_data.get(key) if isinstance(event_data, dict) else None
+            if isinstance(candidate, str) and candidate.strip():
+                event_id = candidate.strip()
+                break
+
+    if not event_id:
+        # Stable fallback for providers that do not send an explicit webhook ID.
+        basis = f"{event.event}|{event.choreography_id}|{event.version}"
+        event_id = hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+    classification = await webhook_state_store.classify_and_mark(
+        event_id=event_id,
+        choreography_id=f"track:{event.choreography_id}",
+        version=event.version,
+    )
+    if classification == "duplicate":
+        return {"status": "duplicate", "accepted": False}
+    if classification == "stale":
+        raise HTTPException(
+            status_code=409,
+            detail="Stale choreography version.",
+        )
+
+    await webhook_queue.put(
+        {
+            "entity": "track",
+            "event_id": event_id,
+            "choreography_id": event.choreography_id,
+            "version": event.version,
+            "updated_at": event.updated_at,
+            "mode": mode,
+            "payload": event.payload,
+            "source": event.source,
+        }
+    )
+
+    return {
+        "status": "accepted",
+        "accepted": True,
+        "queue_depth": webhook_queue.qsize(),
+    }
+
+
+@app.post(
+    "/api/v1/routine/updated",
+    tags=["webhooks"],
+    summary="Receive routine update webhook",
+    description=(
+        "Receives `routine.updated` events, verifies HMAC signature, applies "
+        "idempotency and version checks, then queues async processing."
+    ),
+    responses={
+        200: {"description": "Accepted or duplicate event."},
+        400: {"description": "Invalid payload."},
+        401: {"description": "Invalid or missing webhook signature/timestamp."},
+        409: {"description": "Stale routine version."},
+    },
+)
+async def routine_updated_webhook(
+    request: Request,
+    x_webhook_id: str | None = Header(
+        default=None,
+        description="Optional unique event ID for deduplication.",
+    ),
+    x_webhook_timestamp: str | None = Header(
+        default=None,
+        description="Unix timestamp used in webhook signature verification.",
+    ),
+    x_webhook_signature: str | None = Header(
+        default=None,
+        description=(
+            "HMAC signature. Accepted formats: `sha256=<hex>`, `v1=<hex>`, "
+            "`sha256:<hex>`, raw hex, or base64 digest."
+        ),
+    ),
+) -> dict[str, Any]:
+    raw_body = await request.body()
+    require_webhook_signature(
+        request=request,
+        raw_body=raw_body,
+        x_webhook_timestamp=x_webhook_timestamp,
+        x_webhook_signature=x_webhook_signature,
+    )
+
+    try:
+        event_data = json.loads(raw_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
+
+    try:
+        event = RoutineWebhookEvent.model_validate(event_data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}") from exc
+
+    if event.event != "routine.updated":
+        raise HTTPException(status_code=400, detail="Unsupported event.")
+
+    mode = event.mode.strip().lower()
+    if mode not in {"notify", "push"}:
+        raise HTTPException(status_code=400, detail="mode must be 'notify' or 'push'.")
+
+    if mode == "push" and event.payload is None:
+        raise HTTPException(status_code=400, detail="push mode requires payload.")
+
+    event_id = (x_webhook_id or "").strip()
+    if not event_id:
+        for key in ("event_id", "webhook_id", "id"):
+            candidate = event_data.get(key) if isinstance(event_data, dict) else None
+            if isinstance(candidate, str) and candidate.strip():
+                event_id = candidate.strip()
+                break
+    if not event_id:
+        basis = f"{event.event}|{event.routine_id}|{event.version}"
+        event_id = hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+    classification = await webhook_state_store.classify_and_mark(
+        event_id=event_id,
+        choreography_id=f"routine:{event.routine_id}",
+        version=event.version,
+    )
+    if classification == "duplicate":
+        return {"status": "duplicate", "accepted": False}
+    if classification == "stale":
+        raise HTTPException(status_code=409, detail="Stale routine version.")
+
+    await webhook_queue.put(
+        {
+            "entity": "routine",
+            "event_id": event_id,
+            "routine_id": event.routine_id,
+            "version": event.version,
+            "updated_at": event.updated_at,
+            "mode": mode,
+            "payload": event.payload,
+            "source": event.source,
+        }
+    )
+    return {
+        "status": "accepted",
+        "accepted": True,
+        "queue_depth": webhook_queue.qsize(),
+    }

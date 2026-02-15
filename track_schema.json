@@ -79,22 +79,19 @@
             "type": "string",
             "description": "Resistance display with level (e.g., L5 (5))"
           },
-          "rpmMin": {
+          "rpm": {
             "type": "number",
-            "description": "Minimum RPM"
-          },
-          "rpmMax": {
-            "type": "number",
-            "description": "Maximum RPM"
+            "description": "Target RPM"
           },
           "position": {
             "type": "string",
             "enum": [
-              "Ride easy",
-              "Seated Climb",
-              "Racing Climb",
-              "Standing Climb",
-              "Racing",
+              "Base",
+              "Recover",
+              "Seated",
+              "Attack",
+              "Stand",
+              "Sprint",
               "Hover"
             ],
             "description": "Riding position"
