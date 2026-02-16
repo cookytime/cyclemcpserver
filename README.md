@@ -62,6 +62,12 @@ psql -h localhost -U your_db_user -d choreography -f schema_trackfeedback.sql
 
 # Apply feedback audience migration (recommended for MCP rating workflow)
 psql -h localhost -U your_db_user -d choreography -f migrate_add_audience.sql
+
+# Apply RPM migration (required if upgrading from cadence_min/cadence_max schema)
+psql -h localhost -U your_db_user -d choreography -f migrate_add_rpm.sql
+
+# Normalize legacy track position labels to current names
+psql -h localhost -U your_db_user -d choreography -f migrate_normalize_positions.sql
 ```
 
 Or connect to your database and run the schemas manually:
@@ -72,6 +78,8 @@ psql -h localhost -U your_db_user -d choreography
 \i schema_routines.sql
 \i schema_trackfeedback.sql
 \i migrate_add_audience.sql
+\i migrate_add_rpm.sql
+\i migrate_normalize_positions.sql
 ```
 
 ## Usage
@@ -110,7 +118,7 @@ python sync_routines.py
 - Basic info: title, artist, album, duration
 - Spotify integration: ID, album art, URL
 - Musical characteristics: BPM, intensity, track type, focus area
-- Cycling data: resistance/cadence ranges, base RPM, effort level
+- Cycling data: resistance ranges, target RPM, base RPM, effort level
 - Choreography: structured cues and notes (JSONB)
 - Timestamps: synced_at, updated_at, created_at
 

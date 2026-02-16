@@ -482,7 +482,7 @@ def search_tracks(
             f"""
             SELECT title, artist, album, bpm, intensity, track_type, focus_area,
                    position, duration_minutes, resistance_min, resistance_max,
-                   cadence_min, cadence_max, base_rpm, base_effortlevel,
+                   rpm, base_rpm, base_effortlevel,
                    spotify_url
             FROM tracks
             {where}
@@ -611,7 +611,7 @@ def suggest_tracks_for_slot(
                    t.title, t.artist, t.bpm, t.intensity, t.track_type,
                    t.duration_minutes, t.position, t.focus_area,
                    t.resistance_min, t.resistance_max,
-                   t.cadence_min, t.cadence_max,
+                   t.rpm,
                    t.spotify_url,
                    COALESCE(fb.up_count, 0) as thumbs_up,
                    COALESCE(fb.down_count, 0) as thumbs_down
@@ -984,7 +984,7 @@ def build_class_playlist(
                        t.title, t.artist, t.bpm, t.intensity, t.track_type,
                        t.duration_minutes, t.position, t.focus_area,
                        t.resistance_min, t.resistance_max,
-                       t.cadence_min, t.cadence_max,
+                       t.rpm,
                        t.spotify_url,
                        COALESCE(fb.up_count, 0) as thumbs_up,
                        COALESCE(fb.down_count, 0) as thumbs_down
@@ -1156,8 +1156,7 @@ def build_hybrid_playlist(
             "focus_area": item.get("focus_area"),
             "resistance_min": None,
             "resistance_max": None,
-            "cadence_min": None,
-            "cadence_max": None,
+            "rpm": None,
             "spotify_url": None,
             "thumbs_up": 0,
             "thumbs_down": 0,
