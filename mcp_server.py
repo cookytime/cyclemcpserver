@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import psycopg2
 import requests
@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import AnyHttpUrl
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 
@@ -31,9 +32,10 @@ from psycopg2.pool import SimpleConnectionPool
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # Log level from env (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-LOG_LEVEL = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
-if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    LOG_LEVEL = "INFO"
+_log_level_str = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
+if _log_level_str not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    _log_level_str = "INFO"
+LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = _log_level_str  # type: ignore
 
 # Configure logging to stderr (stdout is reserved for STDIO transport)
 logging.basicConfig(
@@ -142,8 +144,8 @@ _auth_settings = None
 _token_verifier = None
 if _auth_token:
     _auth_settings = AuthSettings(
-        issuer_url=_auth_issuer_url,
-        resource_server_url=_auth_resource_url,
+        issuer_url=AnyHttpUrl(_auth_issuer_url),
+        resource_server_url=AnyHttpUrl(_auth_resource_url),
         required_scopes=_auth_scopes,
     )
     _token_verifier = StaticBearerTokenVerifier(
@@ -466,7 +468,7 @@ def search_tracks(
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         conditions = []
-        params = []
+        params: list[Any] = []
 
         if bpm_min is not None:
             conditions.append("bpm >= %s")
@@ -559,7 +561,7 @@ def suggest_tracks_for_slot(
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         conditions = ["track_type ILIKE %s"]
-        params = [f"%{slot_type}%"]
+        params: list[Any] = [f"%{slot_type}%"]
 
         if duration_min is not None:
             conditions.append("duration_minutes >= %s")
@@ -1555,7 +1557,8 @@ def track_stats() -> str:
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         cur.execute("SELECT COUNT(*) as total FROM tracks")
-        total = cur.fetchone()["total"]
+        row = cur.fetchone()
+        total = row["total"] if row else 0
 
         cur.execute("""
             SELECT track_type, COUNT(*) as count,
