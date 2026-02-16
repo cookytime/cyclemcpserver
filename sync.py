@@ -10,11 +10,48 @@ from config import Config
 
 
 class Base44Sync:
+    POSITION_MAP = {
+        "base": "Base",
+        "recover": "Recover",
+        "ride easy": "Recover",
+        "seated": "Seated",
+        "seated climb": "Seated",
+        "attack": "Attack",
+        "racing climb": "Attack",
+        "stand": "Stand",
+        "standing climb": "Stand",
+        "sprint": "Sprint",
+        "hover": "Hover",
+        # Legacy value from older schema/docs
+        "racing": "Sprint",
+    }
+
     def __init__(self):
         Config.validate()
         self.api_key = Config.BASE44_API_KEY
         self.api_url = Config.BASE44_API_URL
         self.conn = None
+
+    @classmethod
+    def normalize_position(cls, position):
+        if position is None:
+            return None
+        key = str(position).strip().lower()
+        return cls.POSITION_MAP.get(key, position)
+
+    @classmethod
+    def normalize_choreography(cls, choreography):
+        if not isinstance(choreography, list):
+            return choreography
+        normalized = []
+        for cue in choreography:
+            if isinstance(cue, dict):
+                position = cue.get("position")
+                if position is not None:
+                    cue = dict(cue)
+                    cue["position"] = cls.normalize_position(position)
+            normalized.append(cue)
+        return normalized
 
     def connect_db(self):
         """Connect to PostgreSQL database"""
@@ -68,17 +105,25 @@ class Base44Sync:
             track_type = track.get("track_type")
             focus_area = track.get("focus_area")
             position = track.get("position")
+            position = self.normalize_position(position)
 
             # Cycling-specific
             base_rpm = track.get("base_rpm")
             base_effortlevel = track.get("base_effortlevel")
             resistance_min = track.get("resistance_min")
             resistance_max = track.get("resistance_max")
-            cadence_min = track.get("cadence_min")
-            cadence_max = track.get("cadence_max")
+            rpm = track.get("rpm")
+            if rpm is None:
+                cadence_min = track.get("cadence_min")
+                cadence_max = track.get("cadence_max")
+                rpm = (
+                    cadence_min
+                    if cadence_min is not None
+                    else cadence_max
+                )
 
             # Choreography data
-            choreography = track.get("choreography")
+            choreography = self.normalize_choreography(track.get("choreography"))
             cues = track.get("cues")
             notes = track.get("notes")
 
@@ -99,13 +144,13 @@ class Base44Sync:
                     spotify_id, spotify_album_art, spotify_url,
                     bpm, intensity, track_type, focus_area, position,
                     base_rpm, base_effortlevel,
-                    resistance_min, resistance_max, cadence_min, cadence_max,
+                    resistance_min, resistance_max, rpm,
                     choreography, cues, notes,
                     updated_at
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (base44_id)
@@ -126,8 +171,7 @@ class Base44Sync:
                     base_effortlevel = EXCLUDED.base_effortlevel,
                     resistance_min = EXCLUDED.resistance_min,
                     resistance_max = EXCLUDED.resistance_max,
-                    cadence_min = EXCLUDED.cadence_min,
-                    cadence_max = EXCLUDED.cadence_max,
+                    rpm = EXCLUDED.rpm,
                     choreography = EXCLUDED.choreography,
                     cues = EXCLUDED.cues,
                     notes = EXCLUDED.notes,
@@ -152,8 +196,7 @@ class Base44Sync:
                     base_effortlevel,
                     resistance_min,
                     resistance_max,
-                    cadence_min,
-                    cadence_max,
+                    rpm,
                     choreography_json,
                     cues_json,
                     notes,

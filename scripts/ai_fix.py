@@ -133,6 +133,52 @@ def extract_patch(text: str) -> str:
     return text.strip() + "\n"
 
 
+def _normalize_patch_path(path_text: str) -> str:
+    path = path_text.strip().split("\t")[0].strip()
+    if path.startswith("a/") or path.startswith("b/"):
+        path = path[2:]
+    return path
+
+
+def filter_patch_to_files(patch_text: str, allowed_files: set[str]) -> str:
+    lines = patch_text.splitlines(keepends=True)
+    kept: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git "):
+            block: list[str] = [line]
+            i += 1
+            while i < len(lines) and not lines[i].startswith("diff --git "):
+                block.append(lines[i])
+                i += 1
+
+            block_text = "".join(block)
+            plus_path = None
+            for bline in block:
+                if bline.startswith("+++ "):
+                    plus_path = _normalize_patch_path(bline[4:])
+                    break
+            normalized_allowed = {p.replace("\\", "/") for p in allowed_files}
+            is_allowed = False
+            if plus_path:
+                plus_norm = plus_path.replace("\\", "/")
+                if plus_norm in normalized_allowed:
+                    is_allowed = True
+                else:
+                    # Some model outputs use absolute paths; allow suffix match.
+                    is_allowed = any(
+                        plus_norm.endswith("/" + p) or plus_norm.endswith(p)
+                        for p in normalized_allowed
+                    )
+
+            if is_allowed:
+                kept.append(block_text)
+        else:
+            i += 1
+    return "".join(kept).strip() + "\n" if kept else ""
+
+
 def write_patch(patch_text: str, patch_file: Path) -> None:
     patch_file.parent.mkdir(parents=True, exist_ok=True)
     patch_file.write_text(patch_text, encoding="utf-8")
@@ -140,7 +186,7 @@ def write_patch(patch_text: str, patch_file: Path) -> None:
 
 def patch_check(repo_root: Path, patch_file: Path) -> tuple[bool, str]:
     check = subprocess.run(
-        ["git", "apply", "--check", "--recount", str(patch_file)],
+        ["git", "apply", "--check", "--recount", "--3way", str(patch_file)],
         cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -159,7 +205,14 @@ def apply_patch(repo_root: Path, patch_file: Path, dry_run: bool) -> None:
         raise RuntimeError(f"Patch failed check:\n{out}")
 
     apply = subprocess.run(
-        ["git", "apply", "--whitespace=nowarn", "--recount", str(patch_file)],
+        [
+            "git",
+            "apply",
+            "--whitespace=nowarn",
+            "--recount",
+            "--3way",
+            str(patch_file),
+        ],
         cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -279,6 +332,9 @@ def main() -> int:
             retry_backoff=args.retry_backoff,
         )
         patch_text = extract_patch(raw)
+        patch_text = filter_patch_to_files(
+            patch_text, {str(path).replace("\\", "/") for path in files}
+        )
         if not patch_text.strip() or patch_text.strip() == "---":
             print("Model returned no usable patch.", file=sys.stderr)
             return 1
@@ -314,6 +370,9 @@ def main() -> int:
                 retry_backoff=args.retry_backoff,
             )
             patch_text = extract_patch(raw)
+            patch_text = filter_patch_to_files(
+                patch_text, {str(path).replace("\\", "/") for path in files}
+            )
             write_patch(patch_text, patch_file)
             ok, patch_err = patch_check(repo_root, patch_file)
 

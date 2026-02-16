@@ -58,7 +58,7 @@ ORDER BY cue_count DESC;
 -- Find tracks with specific positions in choreography
 SELECT DISTINCT title, artist, track_type
 FROM tracks, jsonb_array_elements(choreography) as cue
-WHERE cue->>'position' = 'Standing Climb';
+WHERE cue->>'position' = 'Stand';
 
 -- Get all choreography cues for a specific track
 SELECT
@@ -66,8 +66,7 @@ SELECT
     cue->>'timestamp' as time,
     cue->>'position' as position,
     cue->>'resistance' as resistance,
-    cue->>'rpmMin' as rpm_min,
-    cue->>'rpmMax' as rpm_max,
+    COALESCE(cue->>'rpm', cue->>'rpmMin', cue->>'rpmMax') as rpm,
     cue->>'note' as note
 FROM tracks, jsonb_array_elements(choreography) as cue
 WHERE title = 'Your Track Name Here'
