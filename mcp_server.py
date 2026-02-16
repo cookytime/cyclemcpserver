@@ -1171,36 +1171,30 @@ def build_hybrid_playlist(
             if title and artist:
                 existing = lookup_track_by_title_artist(conn, str(title), str(artist))
 
+            track = {
+                "id": None,
+                "spotify_id": None,
+                "title": title,
+                "artist": artist,
+                "bpm": item.get("estimated_bpm"),
+                "intensity": "medium",
+                "track_type": item.get("focus_area"),
+                "duration_minutes": None,
+                "position": None,
+                "focus_area": item.get("focus_area"),
+                "resistance_min": None,
+                "resistance_max": None,
+                "rpm": None,
+                "spotify_url": None,
+                "thumbs_up": 0,
+                "thumbs_down": 0,
+                "notes": item.get("notes"),
+                "source": "ai",
+            }
+
             if existing:
-                track = dict(existing)
-                track.setdefault("bpm", item.get("estimated_bpm"))
-                track.setdefault("track_type", item.get("focus_area"))
-                track.setdefault("focus_area", item.get("focus_area"))
-                track.setdefault("spotify_url", None)
-                track.setdefault("thumbs_up", 0)
-                track.setdefault("thumbs_down", 0)
-                track["source"] = "ai"
-            else:
-                track = {
-                    "id": None,
-                    "spotify_id": None,
-                    "title": title,
-                    "artist": artist,
-                    "bpm": item.get("estimated_bpm"),
-                    "intensity": "medium",
-                    "track_type": item.get("focus_area"),
-                    "duration_minutes": None,
-                    "position": None,
-                    "focus_area": item.get("focus_area"),
-                    "resistance_min": None,
-                    "resistance_max": None,
-                    "rpm": None,
-                    "spotify_url": None,
-                    "thumbs_up": 0,
-                    "thumbs_down": 0,
-                    "notes": item.get("notes"),
-                    "source": "ai",
-                }
+                track["spotify_id"] = existing.get("spotify_id")
+                track["spotify_url"] = existing.get("spotify_url")
 
             add_track_to_phase(
                 playlist,
