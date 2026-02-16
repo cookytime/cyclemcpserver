@@ -586,7 +586,7 @@ def suggest_tracks_for_slot(
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        all_params = list(params)
+        all_params: list[Any] = list(params)
         all_params.append(min(limit, 50))
 
         order = (
