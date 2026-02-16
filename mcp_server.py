@@ -1349,7 +1349,7 @@ def recommend_class_tracks(
             }:
                 suggest_type = "build"
 
-                        existing = lookup_track_by_title_artist(conn, title, artist)
+            existing = lookup_track_by_title_artist(conn, title, artist)
 
             used.add(key)
             if existing:
