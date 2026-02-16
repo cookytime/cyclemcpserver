@@ -1353,10 +1353,17 @@ def recommend_class_tracks(
 
             used.add(key)
             if existing:
-                # If the AI suggestion exists in DB, return full DB track schema.
-                full_track = dict(existing)
-                full_track["suggest_type"] = suggest_type
-                results.append(full_track)
+                # Preserve the standard response shape and add Spotify fields if known.
+                results.append(
+                    {
+                        "title": title,
+                        "artist": artist,
+                        "bpm": existing.get("bpm") or t.get("estimated_bpm"),
+                        "suggest_type": suggest_type,
+                        "spotify_id": existing.get("spotify_id"),
+                        "spotify_url": existing.get("spotify_url"),
+                    }
+                )
             else:
                 # If not in DB, return minimal shape only.
                 results.append(
