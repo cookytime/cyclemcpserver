@@ -27,3 +27,6 @@ venv/
 # Local runtime artifacts
 .logs/
 .run/
+
+# Node Modules
+node_modules/
