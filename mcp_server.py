@@ -187,6 +187,27 @@ def normalize_track_key(title: str | None, artist: str | None) -> str:
     return f"{t}|{a}"
 
 
+def lookup_track_by_title_artist(conn, title: str, artist: str) -> dict[str, Any] | None:
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute(
+            """
+            SELECT *
+            FROM tracks
+            WHERE LOWER(TRIM(title)) = LOWER(TRIM(%s))
+              AND LOWER(TRIM(artist)) = LOWER(TRIM(%s))
+            LIMIT 1
+            """,
+            (title, artist),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {k: serialize(v) for k, v in dict(row).items()}
+    finally:
+        cur.close()
+
+
 def derive_target_track_count(
     duration_minutes: int, explicit_target: int | None
 ) -> int:
@@ -1075,121 +1096,143 @@ def build_hybrid_playlist(
     conn = get_conn(ctx)
     try:
         feedback = fetch_feedback_signals(conn, audience=audience)
-    finally:
-        put_conn(ctx, conn)
 
-    disliked_titles = {t.lower().strip() for t in feedback.get("disliked_titles", [])}
-    disliked_artists = {a.lower().strip() for a in feedback.get("disliked_artists", [])}
+        disliked_titles = {
+            t.lower().strip() for t in feedback.get("disliked_titles", [])
+        }
+        disliked_artists = {
+            a.lower().strip() for a in feedback.get("disliked_artists", [])
+        }
 
-    def allowed(track: dict[str, Any]) -> bool:
-        title = str(track.get("title") or "").lower().strip()
-        artist = str(track.get("artist") or "").lower().strip()
-        if not title or not artist:
-            return False
-        if title in disliked_titles or artist in disliked_artists:
-            return False
-        return True
+        def allowed(track: dict[str, Any]) -> bool:
+            title = str(track.get("title") or "").lower().strip()
+            artist = str(track.get("artist") or "").lower().strip()
+            if not title or not artist:
+                return False
+            if title in disliked_titles or artist in disliked_artists:
+                return False
+            return True
 
-    db_tracks_flat: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for phase in playlist:
-        tracks = phase.get("tracks", []) or []
-        filtered: list[dict[str, Any]] = []
-        for track in tracks:
-            if not isinstance(track, dict) or not allowed(track):
-                continue
-            key = normalize_track_key(track.get("title"), track.get("artist"))
+        db_tracks_flat: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for phase in playlist:
+            tracks = phase.get("tracks", []) or []
+            filtered: list[dict[str, Any]] = []
+            for track in tracks:
+                if not isinstance(track, dict) or not allowed(track):
+                    continue
+                key = normalize_track_key(track.get("title"), track.get("artist"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                t = dict(track)
+                t["source"] = "db"
+                filtered.append(t)
+                db_tracks_flat.append(
+                    {
+                        "title": t.get("title"),
+                        "artist": t.get("artist"),
+                        "bpm": t.get("bpm"),
+                        "track_type": t.get("track_type"),
+                        "phase": phase.get("phase"),
+                    }
+                )
+            phase["tracks"] = filtered
+
+        desired_count = derive_target_track_count(duration_minutes, target_tracks)
+        needed_count = max(0, desired_count - len(db_tracks_flat))
+
+        ai_tracks = suggest_external_tracks_with_openai(
+            duration_minutes=duration_minutes,
+            difficulty=difficulty,
+            theme=theme,
+            audience=audience,
+            needed_count=needed_count,
+            existing_tracks=db_tracks_flat,
+            feedback_signals=feedback,
+        )
+
+        added_ai = 0
+        for item in ai_tracks:
+            if added_ai >= needed_count:
+                break
+            title = item.get("title")
+            artist = item.get("artist")
+            key = normalize_track_key(title, artist)
             if key in seen:
                 continue
+            if str(title).lower().strip() in disliked_titles:
+                continue
+            if str(artist).lower().strip() in disliked_artists:
+                continue
             seen.add(key)
-            t = dict(track)
-            t["source"] = "db"
-            filtered.append(t)
-            db_tracks_flat.append(
-                {
-                    "title": t.get("title"),
-                    "artist": t.get("artist"),
-                    "bpm": t.get("bpm"),
-                    "track_type": t.get("track_type"),
-                    "phase": phase.get("phase"),
+
+            existing = None
+            if title and artist:
+                existing = lookup_track_by_title_artist(conn, str(title), str(artist))
+
+            if existing:
+                track = dict(existing)
+                track.setdefault("bpm", item.get("estimated_bpm"))
+                track.setdefault("track_type", item.get("focus_area"))
+                track.setdefault("focus_area", item.get("focus_area"))
+                track.setdefault("spotify_url", None)
+                track.setdefault("thumbs_up", 0)
+                track.setdefault("thumbs_down", 0)
+                track["source"] = "ai"
+            else:
+                track = {
+                    "id": None,
+                    "spotify_id": None,
+                    "title": title,
+                    "artist": artist,
+                    "bpm": item.get("estimated_bpm"),
+                    "intensity": "medium",
+                    "track_type": item.get("focus_area"),
+                    "duration_minutes": None,
+                    "position": None,
+                    "focus_area": item.get("focus_area"),
+                    "resistance_min": None,
+                    "resistance_max": None,
+                    "rpm": None,
+                    "spotify_url": None,
+                    "thumbs_up": 0,
+                    "thumbs_down": 0,
+                    "notes": item.get("notes"),
+                    "source": "ai",
                 }
+
+            add_track_to_phase(
+                playlist,
+                focus_area_to_phase_name(str(item.get("focus_area") or "")),
+                track,
             )
-        phase["tracks"] = filtered
+            added_ai += 1
 
-    desired_count = derive_target_track_count(duration_minutes, target_tracks)
-    needed_count = max(0, desired_count - len(db_tracks_flat))
+        tracks_flat: list[dict[str, Any]] = []
+        for phase in playlist:
+            for track in phase.get("tracks", []) or []:
+                t = dict(track)
+                t["phase"] = phase.get("phase")
+                tracks_flat.append(t)
 
-    ai_tracks = suggest_external_tracks_with_openai(
-        duration_minutes=duration_minutes,
-        difficulty=difficulty,
-        theme=theme,
-        audience=audience,
-        needed_count=needed_count,
-        existing_tracks=db_tracks_flat,
-        feedback_signals=feedback,
-    )
-
-    added_ai = 0
-    for item in ai_tracks:
-        if added_ai >= needed_count:
-            break
-        title = item.get("title")
-        artist = item.get("artist")
-        key = normalize_track_key(title, artist)
-        if key in seen:
-            continue
-        if str(title).lower().strip() in disliked_titles:
-            continue
-        if str(artist).lower().strip() in disliked_artists:
-            continue
-        seen.add(key)
-        track = {
-            "id": None,
-            "spotify_id": None,
-            "title": title,
-            "artist": artist,
-            "bpm": item.get("estimated_bpm"),
-            "intensity": "medium",
-            "track_type": item.get("focus_area"),
-            "duration_minutes": None,
-            "position": None,
-            "focus_area": item.get("focus_area"),
-            "resistance_min": None,
-            "resistance_max": None,
-            "rpm": None,
-            "spotify_url": None,
-            "thumbs_up": 0,
-            "thumbs_down": 0,
-            "notes": item.get("notes"),
-            "source": "ai",
+        total_duration = sum((t.get("duration_minutes") or 0) for t in tracks_flat)
+        result = {
+            "target_duration": duration_minutes,
+            "estimated_duration": round(total_duration, 1),
+            "difficulty": difficulty,
+            "theme": theme,
+            "target_track_count": desired_count,
+            "db_track_count": len(db_tracks_flat),
+            "ai_track_count": added_ai,
+            "total_tracks": len(tracks_flat),
+            "feedback_signals": feedback,
+            "playlist": playlist,
+            "tracks": tracks_flat,
         }
-        add_track_to_phase(
-            playlist, focus_area_to_phase_name(str(item.get("focus_area") or "")), track
-        )
-        added_ai += 1
-
-    tracks_flat: list[dict[str, Any]] = []
-    for phase in playlist:
-        for track in phase.get("tracks", []) or []:
-            t = dict(track)
-            t["phase"] = phase.get("phase")
-            tracks_flat.append(t)
-
-    total_duration = sum((t.get("duration_minutes") or 0) for t in tracks_flat)
-    result = {
-        "target_duration": duration_minutes,
-        "estimated_duration": round(total_duration, 1),
-        "difficulty": difficulty,
-        "theme": theme,
-        "target_track_count": desired_count,
-        "db_track_count": len(db_tracks_flat),
-        "ai_track_count": added_ai,
-        "total_tracks": len(tracks_flat),
-        "feedback_signals": feedback,
-        "playlist": playlist,
-        "tracks": tracks_flat,
-    }
-    return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2)
+    finally:
+        put_conn(ctx, conn)
 
 
 @mcp.tool()
@@ -1221,8 +1264,6 @@ def recommend_class_tracks(
     """
     conn = get_conn(ctx)
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
         preferred_genre_list = parse_csv_list(preferred_genres)
         preferred_artist_list = parse_csv_list(preferred_artists)
         excluded_genre_list = [g.lower() for g in parse_csv_list(exclude_genres)]
@@ -1308,22 +1349,12 @@ def recommend_class_tracks(
             }:
                 suggest_type = "build"
 
-            cur.execute(
-                """
-                SELECT *
-                FROM tracks
-                WHERE LOWER(TRIM(title)) = LOWER(TRIM(%s))
-                  AND LOWER(TRIM(artist)) = LOWER(TRIM(%s))
-                LIMIT 1
-                """,
-                (title, artist),
-            )
-            existing = cur.fetchone()
+                        existing = lookup_track_by_title_artist(conn, title, artist)
 
             used.add(key)
             if existing:
                 # If the AI suggestion exists in DB, return full DB track schema.
-                full_track = {k: serialize(v) for k, v in dict(existing).items()}
+                full_track = dict(existing)
                 full_track["suggest_type"] = suggest_type
                 results.append(full_track)
             else:
