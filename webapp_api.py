@@ -1551,13 +1551,55 @@ async def generate_tracks(
     summary="Receive choreography update webhook",
     description=(
         "Receives `choreography.updated` events, verifies HMAC signature, applies "
-        "idempotency and version checks, then queues async processing."
+        "idempotency and version checks, then queues async processing. Accepts either "
+        "a full event wrapper or a raw Base44 track payload."
     ),
     responses={
         200: {"description": "Accepted or duplicate event."},
         400: {"description": "Invalid payload."},
         401: {"description": "Invalid or missing webhook signature/timestamp."},
         409: {"description": "Stale choreography version."},
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"type": "object"},
+                    "examples": {
+                        "eventWrapper": {
+                            "summary": "Event wrapper (Base44 sender)",
+                            "value": {
+                                "event": "choreography.updated",
+                                "choreography_id": "123",
+                                "version": 1700000000000,
+                                "updated_at": "2026-02-15T12:00:00Z",
+                                "mode": "push",
+                                "payload": {
+                                    "track": {
+                                        "id": "123",
+                                        "title": "Example Track",
+                                        "artist": "Example Artist",
+                                        "updated_at": "2026-02-15T12:00:00Z",
+                                    }
+                                },
+                                "source": "base44",
+                            },
+                        },
+                        "rawTrack": {
+                            "summary": "Raw track payload (Base44 webhook)",
+                            "value": {
+                                "id": "123",
+                                "title": "Example Track",
+                                "artist": "Example Artist",
+                                "updated_at": "2026-02-15T12:00:00Z",
+                                "version": 1700000000000,
+                            },
+                        },
+                    },
+                }
+            },
+        }
     },
 )
 async def choreography_updated_webhook(
@@ -1661,13 +1703,53 @@ async def choreography_updated_webhook(
     summary="Receive routine update webhook",
     description=(
         "Receives `routine.updated` events, verifies HMAC signature, applies "
-        "idempotency and version checks, then queues async processing."
+        "idempotency and version checks, then queues async processing. Accepts either "
+        "a full event wrapper or a raw Base44 routine payload."
     ),
     responses={
         200: {"description": "Accepted or duplicate event."},
         400: {"description": "Invalid payload."},
         401: {"description": "Invalid or missing webhook signature/timestamp."},
         409: {"description": "Stale routine version."},
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"type": "object"},
+                    "examples": {
+                        "eventWrapper": {
+                            "summary": "Event wrapper (Base44 sender)",
+                            "value": {
+                                "event": "routine.updated",
+                                "routine_id": "456",
+                                "version": 1700000000000,
+                                "updated_at": "2026-02-15T12:00:00Z",
+                                "mode": "push",
+                                "payload": {
+                                    "routine": {
+                                        "id": "456",
+                                        "name": "Example Routine",
+                                        "updated_at": "2026-02-15T12:00:00Z",
+                                    }
+                                },
+                                "source": "base44",
+                            },
+                        },
+                        "rawRoutine": {
+                            "summary": "Raw routine payload (Base44 webhook)",
+                            "value": {
+                                "id": "456",
+                                "name": "Example Routine",
+                                "updated_at": "2026-02-15T12:00:00Z",
+                                "version": 1700000000000,
+                            },
+                        },
+                    },
+                }
+            },
+        }
     },
 )
 async def routine_updated_webhook(
