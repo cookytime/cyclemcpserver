@@ -32,8 +32,12 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, Field
 from psycopg2.extras import Json
 from pydantic import AnyUrl, BaseModel, Field
+
+from config import Config
 
 from config import Config
 
@@ -1195,6 +1199,12 @@ app = FastAPI(
 )
 
 
+def get_db_connection():
+    """Create and return a database connection."""
+    return psycopg2.connect(Config.get_db_connection_string())
+
+
+@app.get("/health")
 @app.get(
     "/health",
     tags=["health"],
@@ -1205,6 +1215,64 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/routines/{routine_id}/tracks")
+async def get_routine_tracks(
+    routine_id: int,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Get all tracks in a routine with name, artist, and track type."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Query to get tracks for the routine with JOIN to get track details
+        query = """
+            SELECT 
+                t.title as name,
+                t.artist,
+                t.track_type,
+                rt.track_order
+            FROM routine_tracks rt
+            INNER JOIN tracks t ON rt.track_id = t.id
+            WHERE rt.routine_id = %s
+            ORDER BY rt.track_order
+        """
+        
+        cursor.execute(query, (routine_id,))
+        tracks = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        # Convert to list of dicts and remove track_order from response
+        track_list = [
+            {
+                "name": track["name"],
+                "artist": track["artist"],
+                "track_type": track["track_type"],
+            }
+            for track in tracks
+        ]
+        
+        return {
+            "routine_id": routine_id,
+            "tracks": track_list,
+            "count": len(track_list),
+        }
+        
+    except psycopg2.Error as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}",
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching routine tracks: {str(e)}",
+        ) from e
+
+
+@app.post("/api/playlist")
 @app.post(
     "/api/playlist",
     tags=["playlist"],
