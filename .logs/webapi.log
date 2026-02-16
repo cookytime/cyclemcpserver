@@ -100,3 +100,42 @@ INFO:     Started server process [851498]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     Started server process [710284]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     192.168.1.4:51584 - "GET /docs HTTP/1.1" 200 OK
+INFO:     192.168.1.4:51586 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     192.168.1.4:34644 - "GET /api/routines/17/tracks HTTP/1.1" 401 Unauthorized
+INFO:     192.168.1.4:47146 - "GET /api/routines/17/tracks HTTP/1.1" 200 OK
+INFO:     192.168.1.4:55122 - "POST /api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35210 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:52792 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:33208 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46320 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35424 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:58374 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:44096 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:44068 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:44010 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:43434 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:54084 - "GET /robots.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:46240 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:51916 - "POST /api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:55890 - "POST /api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:38246 - "POST /api/v1/choreography/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:43208 - "GET /robots.txt HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:55126 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:35198 - "POST /api/v1/routine/updated HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:57840 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:57854 - "GET /js/twint_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:57858 - "GET /css/support_parent.css HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:57862 - "GET /js/lkk_ch.js HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:42176 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:42182 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:58218 - "GET / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:53976 - "HEAD / HTTP/1.1" 404 Not Found
+INFO:     192.168.1.4:42682 - "GET /docs HTTP/1.1" 200 OK
+INFO:     192.168.1.4:42684 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     192.168.1.4:35502 - "GET /docs HTTP/1.1" 200 OK
+INFO:     192.168.1.4:35506 - "GET /openapi.json HTTP/1.1" 200 OK

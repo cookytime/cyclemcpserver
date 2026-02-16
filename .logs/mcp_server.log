@@ -1143,3 +1143,20 @@ INFO:     192.168.1.4:45102 - "POST /mcp HTTP/1.1" 200 OK
 2026-02-12 12:27:00,315 - mcp.server.streamable_http - INFO - Terminating session: dd4c69f88c4d46f2a852c7627f44f081
 INFO:     192.168.1.4:46708 - "DELETE /mcp HTTP/1.1" 200 OK
 2026-02-12 12:27:00,317 - choreography-mcp - INFO - Database pool closed.
+2026-02-15 07:15:52,586 - choreography-mcp - INFO - MCP HTTP auth enabled (Bearer token + scopes=mcp:access).
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Initializing server 'choreography-db'
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListToolsRequest
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Registering handler for CallToolRequest
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListResourcesRequest
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Registering handler for ReadResourceRequest
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Registering handler for PromptListRequest
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Registering handler for GetPromptRequest
+2026-02-15 07:15:52,592 - mcp.server.lowlevel.server - DEBUG - Registering handler for ListResourceTemplatesRequest
+2026-02-15 07:15:52,606 - mcp.server.fastmcp.resources.resource_manager - DEBUG - Adding resource
+2026-02-15 07:15:52,608 - choreography-mcp - INFO - Starting MCP server transport=streamable-http host=0.0.0.0 port=8000
+2026-02-15 07:15:52,610 - asyncio - DEBUG - Using selector: EpollSelector
+INFO:     Started server process [710269]
+INFO:     Waiting for application startup.
+2026-02-15 07:15:52,624 - mcp.server.streamable_http_manager - INFO - StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
