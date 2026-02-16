@@ -21,6 +21,7 @@ import base64
 import hashlib
 import asyncio
 import logging
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any
 from pathlib import Path
@@ -258,6 +259,117 @@ def require_webhook_signature(
         client = request.client.host if request.client else "unknown"
         logger.warning("Rejected webhook with bad signature from %s", client)
         raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+
+
+def _coerce_version(value: Any, updated_at: str | None) -> int:
+    if value is not None:
+        try:
+            return int(value)
+        except Exception:
+            pass
+    if updated_at:
+        try:
+            parsed = updated_at.replace("Z", "+00:00")
+            return int(datetime.fromisoformat(parsed).timestamp() * 1000)
+        except Exception:
+            pass
+    return int(time.time() * 1000)
+
+
+def _normalize_choreography_event(event_data: dict[str, Any]) -> dict[str, Any]:
+    if {
+        "event",
+        "choreography_id",
+        "version",
+        "updated_at",
+    }.issubset(event_data.keys()):
+        return event_data
+
+    track: dict[str, Any] | None = None
+    payload = event_data.get("payload")
+    if isinstance(payload, dict) and isinstance(payload.get("track"), dict):
+        track = payload["track"]
+    elif isinstance(event_data.get("track"), dict):
+        track = event_data["track"]
+    elif isinstance(event_data.get("data"), dict):
+        track = event_data["data"]
+    elif isinstance(event_data.get("choreography"), dict):
+        track = event_data["choreography"]
+
+    if track is None:
+        return event_data
+
+    choreography_id = event_data.get("choreography_id") or track.get("id") or event_data.get("id")
+    if choreography_id is None:
+        return event_data
+
+    updated_at = track.get("updated_at") or event_data.get("updated_at")
+    if not isinstance(updated_at, str) or not updated_at.strip():
+        updated_at = datetime.now(timezone.utc).isoformat()
+
+    version = _coerce_version(
+        event_data.get("version") or track.get("version") or track.get("updated_version"),
+        updated_at,
+    )
+
+    normalized_payload = payload if isinstance(payload, dict) else {"track": track}
+
+    return {
+        "event": event_data.get("event") or "choreography.updated",
+        "choreography_id": str(choreography_id),
+        "version": version,
+        "updated_at": updated_at,
+        "mode": event_data.get("mode") or "push",
+        "payload": normalized_payload,
+        "source": event_data.get("source") or "base44",
+    }
+
+
+def _normalize_routine_event(event_data: dict[str, Any]) -> dict[str, Any]:
+    if {
+        "event",
+        "routine_id",
+        "version",
+        "updated_at",
+    }.issubset(event_data.keys()):
+        return event_data
+
+    routine: dict[str, Any] | None = None
+    payload = event_data.get("payload")
+    if isinstance(payload, dict) and isinstance(payload.get("routine"), dict):
+        routine = payload["routine"]
+    elif isinstance(event_data.get("routine"), dict):
+        routine = event_data["routine"]
+    elif isinstance(event_data.get("data"), dict):
+        routine = event_data["data"]
+
+    if routine is None:
+        return event_data
+
+    routine_id = event_data.get("routine_id") or routine.get("id") or event_data.get("id")
+    if routine_id is None:
+        return event_data
+
+    updated_at = routine.get("updated_at") or event_data.get("updated_at")
+    if not isinstance(updated_at, str) or not updated_at.strip():
+        updated_at = datetime.now(timezone.utc).isoformat()
+
+    version = _coerce_version(
+        event_data.get("version") or routine.get("version") or routine.get("updated_version"),
+        updated_at,
+    )
+
+    normalized_payload = payload if isinstance(payload, dict) else {"routine": routine}
+
+    return {
+        "event": event_data.get("event") or "routine.updated",
+        "routine_id": str(routine_id),
+        "version": version,
+        "updated_at": updated_at,
+        "mode": event_data.get("mode") or "push",
+        "payload": normalized_payload,
+        "source": event_data.get("source") or "base44",
+    }
 
 
 def fetch_track_by_base44_id(base44_id: str) -> dict[str, Any]:
@@ -1479,6 +1591,9 @@ async def choreography_updated_webhook(
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
 
+    if isinstance(event_data, dict):
+        event_data = _normalize_choreography_event(event_data)
+
     try:
         event = ChoreographyWebhookEvent.model_validate(event_data)
     except Exception as exc:
@@ -1585,6 +1700,9 @@ async def routine_updated_webhook(
         event_data = json.loads(raw_body.decode("utf-8"))
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
+
+    if isinstance(event_data, dict):
+        event_data = _normalize_routine_event(event_data)
 
     try:
         event = RoutineWebhookEvent.model_validate(event_data)
