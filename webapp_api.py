@@ -12,19 +12,19 @@ Dependencies:
 - mcp
 """
 
+import asyncio
+import base64
+import hashlib
+import hmac
 import json
+import logging
 import os
 import re
 import time
-import hmac
-import base64
-import hashlib
-import asyncio
-import logging
-from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from typing import Any
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 import psycopg2
@@ -33,12 +33,8 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
-from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, Field
-from psycopg2.extras import Json
+from psycopg2.extras import Json, RealDictCursor
 from pydantic import AnyUrl, BaseModel, Field
-
-from config import Config
 
 from config import Config
 

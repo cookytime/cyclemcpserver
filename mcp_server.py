@@ -1,3 +1,4 @@
+# mcp_server.py
 #!/usr/bin/env python3
 """
 MCP Server for Cycle Class Track Suggestions.
@@ -12,21 +13,21 @@ import json
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager
+import time
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-import psycopg2
 import requests
 from dotenv import load_dotenv
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import AnyHttpUrl
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
+from pydantic import AnyHttpUrl
 
 # Load .env from the same directory as this script
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
@@ -45,6 +46,127 @@ logging.basicConfig(
 )
 logger = logging.getLogger("choreography-mcp")
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+TRACK_SELECT_COLUMNS = """
+    t.id, t.spotify_id, t.title, t.artist, t.album, t.bpm, t.intensity,
+    t.track_type, t.duration_minutes, t.position, t.focus_area,
+    t.resistance_min, t.resistance_max, t.rpm, t.base_rpm,
+    t.base_effortlevel, t.spotify_url, t.notes
+"""
+
+VALID_TRACK_TYPES = {
+    "warmup",
+    "climb",
+    "sprint",
+    "recovery",
+    "cooldown",
+    "intervals",
+    "endurance",
+    "build",
+}
+
+VALID_INTENSITIES = {"low", "medium", "high", "extreme"}
+
+VALID_RATINGS = {"up", "down"}
+
+PHASE_NAME_MAP = {
+    "warmup": "Warmup",
+    "cooldown": "Cooldown",
+    "recovery": "Recovery",
+    "sprint": "Peak 2",
+    "climb": "Peak 1",
+    "build": "Build",
+    "endurance": "Build",
+    "intervals": "Build",
+}
+
+INTENSITY_MAP = {
+    "beginner": ["low", "medium"],
+    "intermediate": ["medium", "high"],
+    "advanced": ["high", "extreme"],
+    "expert": ["high", "extreme"],
+}
+
+# ---------------------------------------------------------------------------
+# Error Response Helpers
+# ---------------------------------------------------------------------------
+
+
+def error_response(code: str, message: str, details: dict[str, Any] | None = None) -> str:
+    """Return structured error response."""
+    response = {"error": {"code": code, "message": message}}
+    if details:
+        response["error"]["details"] = details
+    return json.dumps(response, indent=2)
+
+
+def validation_error(field: str, message: str, value: Any = None) -> str:
+    """Return validation error response."""
+    details = {"field": field}
+    if value is not None:
+        details["value"] = value
+    return error_response("VALIDATION_ERROR", message, details)
+
+
+# ---------------------------------------------------------------------------
+# Input Validation
+# ---------------------------------------------------------------------------
+
+
+def validate_bpm(value: float | None, field_name: str = "BPM") -> str | None:
+    """Validate BPM value. Returns error string or None if valid."""
+    if value is None:
+        return None
+    if value < 0:
+        return validation_error(field_name, f"{field_name} cannot be negative", value)
+    if value > 300:
+        return validation_error(field_name, f"{field_name} exceeds reasonable maximum (300)", value)
+    return None
+
+
+def validate_rating(rating: str) -> str | None:
+    """Validate rating value. Returns error string or None if valid."""
+    if rating not in VALID_RATINGS:
+        return validation_error(
+            "rating",
+            f"Rating must be one of: {', '.join(VALID_RATINGS)}",
+            rating,
+        )
+    return None
+
+
+def validate_limit(limit: int) -> str | None:
+    """Validate limit value. Returns error string or None if valid."""
+    if limit < 1:
+        return validation_error("limit", "Limit must be at least 1", limit)
+    if limit > 100:
+        return validation_error("limit", "Limit cannot exceed 100", limit)
+    return None
+
+
+def validate_duration(duration: int, field_name: str = "duration") -> str | None:
+    """Validate duration value. Returns error string or None if valid."""
+    if duration < 1:
+        return validation_error(field_name, "Duration must be at least 1 minute", duration)
+    if duration > 180:
+        return validation_error(field_name, "Duration cannot exceed 180 minutes", duration)
+    return None
+
+
+def validate_required_string(value: str | None, field_name: str) -> str | None:
+    """Validate required string field. Returns error string or None if valid."""
+    if not value or not value.strip():
+        return validation_error(field_name, f"{field_name} is required")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
+
 
 def serialize(obj):
     """Convert non-serializable types for JSON output."""
@@ -58,6 +180,11 @@ def serialize(obj):
 def serialize_rows(rows):
     """Serialize a list of RealDictRow results."""
     return [{k: serialize(v) for k, v in row.items()} for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Context Management
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -173,14 +300,24 @@ mcp = FastMCP(
 )
 
 
-def get_conn(ctx: Context):
-    """Get a connection from the pool."""
-    return ctx.request_context.lifespan_context.db_pool.getconn()
+# ---------------------------------------------------------------------------
+# Database Connection Management
+# ---------------------------------------------------------------------------
 
 
-def put_conn(ctx: Context, conn):
-    """Return a connection to the pool."""
-    ctx.request_context.lifespan_context.db_pool.putconn(conn)
+@contextmanager
+def get_db_connection(ctx: Context):
+    """Context manager for safe database connection handling."""
+    conn = ctx.request_context.lifespan_context.db_pool.getconn()
+    try:
+        yield conn
+    finally:
+        ctx.request_context.lifespan_context.db_pool.putconn(conn)
+
+
+# ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
 
 
 def normalize_track_key(title: str | None, artist: str | None) -> str:
@@ -268,6 +405,53 @@ def fetch_feedback_signals(conn, audience: str | None = None) -> dict[str, list[
     }
 
 
+def call_openai_with_retry(
+    payload: dict[str, Any],
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+) -> dict[str, Any]:
+    """Call OpenAI API with exponential backoff retry logic."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not configured")
+
+    timeout = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "45"))
+    delay = initial_delay
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            if attempt == max_retries - 1:
+                logger.error(f"OpenAI API call failed after {max_retries} attempts: {e}")
+                raise
+            
+            # Check if it's a rate limit or server error
+            if hasattr(e, 'response') and e.response is not None:
+                status_code = e.response.status_code
+                if status_code in (429, 500, 502, 503, 504):
+                    logger.warning(
+                        f"OpenAI API error (status {status_code}), "
+                        f"retrying in {delay}s (attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                    continue
+            raise
+
+    raise RuntimeError("OpenAI API retry logic failed unexpectedly")
+
+
 def suggest_external_tracks_with_openai(
     duration_minutes: int,
     difficulty: str | None,
@@ -282,7 +466,6 @@ def suggest_external_tracks_with_openai(
         return []
 
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    timeout = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "45"))
 
     system_prompt = (
         "You are an expert cycling class music programmer. "
@@ -312,27 +495,23 @@ def suggest_external_tracks_with_openai(
         },
     }
 
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "response_format": {"type": "json_object"},
-            "temperature": 0.3,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(user_payload)},
-            ],
-        },
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    content = payload["choices"][0]["message"]["content"]
-    parsed = json.loads(content)
+    try:
+        result = call_openai_with_retry(
+            {
+                "model": model,
+                "response_format": {"type": "json_object"},
+                "temperature": 0.3,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(user_payload)},
+                ],
+            }
+        )
+        content = result["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+    except Exception as e:
+        logger.error(f"OpenAI suggestion failed: {e}")
+        return []
 
     if isinstance(parsed, list):
         tracks = parsed
@@ -363,18 +542,9 @@ def suggest_external_tracks_with_openai(
 
 def focus_area_to_phase_name(focus_area: str) -> str:
     value = (focus_area or "").lower()
-    if "warm" in value:
-        return "Warmup"
-    if "cool" in value:
-        return "Cooldown"
-    if "recover" in value:
-        return "Recovery"
-    if "sprint" in value:
-        return "Peak 2"
-    if "climb" in value:
-        return "Peak 1"
-    if "build" in value or "endur" in value or "interval" in value:
-        return "Build"
+    for key, phase in PHASE_NAME_MAP.items():
+        if key in value:
+            return phase
     return "Build"
 
 
@@ -446,80 +616,67 @@ def search_tracks(
     keyword: str | None = None,
     limit: int = 20,
 ) -> str:
-    """Search for tracks by musical and cycling criteria.
+    """Search for tracks by musical and cycling criteria."""
+    # Validation
+    if err := validate_bpm(bpm_min, "bpm_min"):
+        return err
+    if err := validate_bpm(bpm_max, "bpm_max"):
+        return err
+    if err := validate_limit(limit):
+        return err
 
-    Use this to find tracks matching specific BPM ranges, intensity levels,
-    track types (warmup, climb, sprint, etc.), riding positions, or artists.
-    The keyword parameter searches across title, artist, album, and notes.
-
-    Args:
-        bpm_min: Minimum BPM (e.g. 100)
-        bpm_max: Maximum BPM (e.g. 140)
-        intensity: Filter by intensity level (low, medium, high, extreme)
-        track_type: Filter by track type
-            (warmup, climb, sprint, recovery, cooldown, intervals, endurance)
-        position: Filter by riding position
-        artist: Filter by artist name (partial match)
-        focus_area: Filter by focus area (e.g. endurance, strength)
-        keyword: Search across title, artist, album, and notes
-        limit: Maximum results to return (default 20)
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        conditions = []
-        params: list[Any] = []
+        try:
+            conditions = []
+            params: list[Any] = []
 
-        if bpm_min is not None:
-            conditions.append("bpm >= %s")
-            params.append(bpm_min)
-        if bpm_max is not None:
-            conditions.append("bpm <= %s")
-            params.append(bpm_max)
-        if intensity:
-            conditions.append("intensity = %s")
-            params.append(intensity)
-        if track_type:
-            conditions.append("track_type ILIKE %s")
-            params.append(f"%{track_type}%")
-        if position:
-            conditions.append("position ILIKE %s")
-            params.append(f"%{position}%")
-        if artist:
-            conditions.append("artist ILIKE %s")
-            params.append(f"%{artist}%")
-        if focus_area:
-            conditions.append("focus_area ILIKE %s")
-            params.append(f"%{focus_area}%")
-        if keyword:
-            conditions.append(
-                "(title ILIKE %s OR artist ILIKE %s OR album ILIKE %s OR notes ILIKE %s)"
+            if bpm_min is not None:
+                conditions.append("bpm >= %s")
+                params.append(bpm_min)
+            if bpm_max is not None:
+                conditions.append("bpm <= %s")
+                params.append(bpm_max)
+            if intensity:
+                conditions.append("intensity = %s")
+                params.append(intensity)
+            if track_type:
+                conditions.append("track_type ILIKE %s")
+                params.append(f"%{track_type}%")
+            if position:
+                conditions.append("position ILIKE %s")
+                params.append(f"%{position}%")
+            if artist:
+                conditions.append("artist ILIKE %s")
+                params.append(f"%{artist}%")
+            if focus_area:
+                conditions.append("focus_area ILIKE %s")
+                params.append(f"%{focus_area}%")
+            if keyword:
+                conditions.append(
+                    "(title ILIKE %s OR artist ILIKE %s OR album ILIKE %s OR notes ILIKE %s)"
+                )
+                kw = f"%{keyword}%"
+                params.extend([kw, kw, kw, kw])
+
+            where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            params.append(min(limit, 50))
+
+            cur.execute(
+                f"""
+                SELECT {TRACK_SELECT_COLUMNS}
+                FROM tracks t
+                {where}
+                ORDER BY title
+                LIMIT %s
+            """,
+                params,
             )
-            kw = f"%{keyword}%"
-            params.extend([kw, kw, kw, kw])
 
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.append(min(limit, 50))
-
-        cur.execute(
-            f"""
-            SELECT title, artist, album, bpm, intensity, track_type, focus_area,
-                   position, duration_minutes, resistance_min, resistance_max,
-                   rpm, base_rpm, base_effortlevel,
-                   spotify_url
-            FROM tracks
-            {where}
-            ORDER BY title
-            LIMIT %s
-        """,
-            params,
-        )
-
-        rows = serialize_rows(cur.fetchall())
-        cur.close()
-        return json.dumps(rows, indent=2)
-    finally:
-        put_conn(ctx, conn)
+            rows = serialize_rows(cur.fetchall())
+            return json.dumps(rows, indent=2)
+        finally:
+            cur.close()
 
 
 @mcp.tool()
@@ -536,130 +693,112 @@ def suggest_tracks_for_slot(
     prefer_top_rated: bool = True,
     limit: int = 10,
 ) -> str:
-    """Suggest the best tracks for a specific slot in a cycling class.
+    """Suggest the best tracks for a specific slot in a cycling class."""
+    # Validation
+    if err := validate_bpm(bpm_min, "bpm_min"):
+        return err
+    if err := validate_bpm(bpm_max, "bpm_max"):
+        return err
+    if err := validate_limit(limit):
+        return err
 
-    Given a slot type (warmup, climb, sprint, recovery, cooldown, intervals,
-    endurance), returns matching tracks ranked by feedback rating.
-    When audience is specified, tracks rated thumbs-down for that audience
-    are deprioritized, and thumbs-up tracks are boosted.
-
-    Args:
-        slot_type: The class slot type
-            (warmup, climb, sprint, recovery, cooldown, intervals, endurance)
-        duration_min: Minimum track duration in minutes
-        duration_max: Maximum track duration in minutes
-        intensity: Preferred intensity (low, medium, high, extreme)
-        bpm_min: Minimum BPM
-        bpm_max: Maximum BPM
-        exclude_titles: Comma-separated track titles to exclude (already in playlist)
-        audience: Target audience demographic (e.g. '50+', 'mixed', 'young')
-            filters out tracks rated down for this audience
-        prefer_top_rated: Rank tracks with thumbs-up feedback higher (default true)
-        limit: Maximum results (default 10)
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        conditions = ["track_type ILIKE %s"]
-        params: list[Any] = [f"%{slot_type}%"]
+        try:
+            conditions = ["track_type ILIKE %s"]
+            params: list[Any] = [f"%{slot_type}%"]
 
-        if duration_min is not None:
-            conditions.append("duration_minutes >= %s")
-            params.append(duration_min)
-        if duration_max is not None:
-            conditions.append("duration_minutes <= %s")
-            params.append(duration_max)
-        if intensity:
-            conditions.append("intensity = %s")
-            params.append(intensity)
-        if bpm_min is not None:
-            conditions.append("bpm >= %s")
-            params.append(bpm_min)
-        if bpm_max is not None:
-            conditions.append("bpm <= %s")
-            params.append(bpm_max)
-        if exclude_titles:
-            titles = [t.strip() for t in exclude_titles.split(",")]
-            placeholders = ",".join(["%s"] * len(titles))
-            conditions.append(f"t.title NOT IN ({placeholders})")
-            params.extend(titles)
+            if duration_min is not None:
+                conditions.append("duration_minutes >= %s")
+                params.append(duration_min)
+            if duration_max is not None:
+                conditions.append("duration_minutes <= %s")
+                params.append(duration_max)
+            if intensity:
+                conditions.append("intensity = %s")
+                params.append(intensity)
+            if bpm_min is not None:
+                conditions.append("bpm >= %s")
+                params.append(bpm_min)
+            if bpm_max is not None:
+                conditions.append("bpm <= %s")
+                params.append(bpm_max)
+            if exclude_titles:
+                titles = [t.strip() for t in exclude_titles.split(",")]
+                placeholders = ",".join(["%s"] * len(titles))
+                conditions.append(f"t.title NOT IN ({placeholders})")
+                params.extend(titles)
 
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        all_params: list[Any] = list(params)
-        all_params.append(min(limit, 50))
-
-        order = (
-            """
-            ORDER BY
-                CASE WHEN fb.down_audience > 0 THEN 4
-                     WHEN fb.up_audience > 0 AND fb.down_count = 0 THEN 0
-                     WHEN fb.up_count > 0 AND fb.down_count = 0 THEN 1
-                     WHEN fb.up_count > fb.down_count THEN 2
-                     WHEN fb.up_count = 0 AND fb.down_count = 0 THEN 3
-                     ELSE 4
-                END,
-                t.title
-        """
-            if prefer_top_rated
-            else "ORDER BY t.title"
-        )
-
-        audience_cols = ""
-        audience_sums = ""
-        if audience:
-            audience_cols = (
-                ", COALESCE(fb.up_audience, 0) as audience_thumbs_up, "
-                "COALESCE(fb.down_audience, 0) as audience_thumbs_down"
-            )
-            audience_sums = """,
-                       SUM(
-                           CASE WHEN rating = 'up' AND audience = %s
-                           THEN 1 ELSE 0
-                       END) as up_audience,
-                       SUM(
-                           CASE WHEN rating = 'down' AND audience = %s
-                           THEN 1 ELSE 0
-                       END) as down_audience"""
-            all_params = [audience, audience] + params
+            all_params: list[Any] = list(params)
             all_params.append(min(limit, 50))
-        else:
-            audience_sums = """,
-                       0 as up_audience,
-                       0 as down_audience"""
 
-        cur.execute(
-            f"""
-            SELECT t.id, t.spotify_id,
-                   t.title, t.artist, t.bpm, t.intensity, t.track_type,
-                   t.duration_minutes, t.position, t.focus_area,
-                   t.resistance_min, t.resistance_max,
-                   t.rpm,
-                   t.spotify_url,
-                   COALESCE(fb.up_count, 0) as thumbs_up,
-                   COALESCE(fb.down_count, 0) as thumbs_down
-                   {audience_cols}
-            FROM tracks t
-            LEFT JOIN (
-                SELECT track_title,
-                       SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
-                       SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count
-                       {audience_sums}
-                FROM track_feedback
-                GROUP BY track_title
-            ) fb ON fb.track_title = t.title
-            {where}
-            {order}
-            LIMIT %s
-        """,
-            all_params,
-        )
+            order = (
+                """
+                ORDER BY
+                    CASE WHEN fb.down_audience > 0 THEN 4
+                         WHEN fb.up_audience > 0 AND fb.down_count = 0 THEN 0
+                         WHEN fb.up_count > 0 AND fb.down_count = 0 THEN 1
+                         WHEN fb.up_count > fb.down_count THEN 2
+                         WHEN fb.up_count = 0 AND fb.down_count = 0 THEN 3
+                         ELSE 4
+                    END,
+                    t.title
+            """
+                if prefer_top_rated
+                else "ORDER BY t.title"
+            )
 
-        rows = serialize_rows(cur.fetchall())
-        cur.close()
-        return json.dumps(rows, indent=2)
-    finally:
-        put_conn(ctx, conn)
+            audience_cols = ""
+            audience_sums = ""
+            if audience:
+                audience_cols = (
+                    ", COALESCE(fb.up_audience, 0) as audience_thumbs_up, "
+                    "COALESCE(fb.down_audience, 0) as audience_thumbs_down"
+                )
+                audience_sums = """,
+                           SUM(
+                               CASE WHEN rating = 'up' AND audience = %s
+                               THEN 1 ELSE 0
+                           END) as up_audience,
+                           SUM(
+                               CASE WHEN rating = 'down' AND audience = %s
+                               THEN 1 ELSE 0
+                           END) as down_audience"""
+                all_params = [audience, audience] + params
+                all_params.append(min(limit, 50))
+            else:
+                audience_sums = """,
+                           0 as up_audience,
+                           0 as down_audience"""
+
+            cur.execute(
+                f"""
+                SELECT {TRACK_SELECT_COLUMNS},
+                       COALESCE(fb.up_count, 0) as thumbs_up,
+                       COALESCE(fb.down_count, 0) as thumbs_down
+                       {audience_cols}
+                FROM tracks t
+                LEFT JOIN (
+                    SELECT track_title,
+                           SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
+                           SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count
+                           {audience_sums}
+                    FROM track_feedback
+                    GROUP BY track_title
+                ) fb ON fb.track_title = t.title
+                {where}
+                {order}
+                LIMIT %s
+            """,
+                all_params,
+            )
+
+            rows = serialize_rows(cur.fetchall())
+            return json.dumps(rows, indent=2)
+        finally:
+            cur.close()
 
 
 @mcp.tool()
@@ -669,105 +808,104 @@ def find_similar_tracks(
     bpm_tolerance: float = 15,
     limit: int = 10,
 ) -> str:
-    """Find tracks similar to a given track based on BPM, intensity, and type.
+    """Find tracks similar to a given track based on BPM, intensity, and type."""
+    # Validation
+    if err := validate_required_string(track_title, "track_title"):
+        return err
+    if err := validate_bpm(bpm_tolerance, "bpm_tolerance"):
+        return err
+    if err := validate_limit(limit):
+        return err
 
-    Useful for finding alternatives or substitutions for a track in a class.
-
-    Args:
-        track_title: The title of the reference track
-        bpm_tolerance: How close the BPM should be (default 15)
-        limit: Maximum results (default 10)
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cur.execute(
+                "SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",)
+            )
+            ref = cur.fetchone()
 
-        # Get the reference track
-        cur.execute(
-            "SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",)
-        )
-        ref = cur.fetchone()
+            if not ref:
+                return error_response(
+                    "NOT_FOUND",
+                    f"Track '{track_title}' not found",
+                    {"track_title": track_title},
+                )
 
-        if not ref:
-            cur.close()
-            return json.dumps({"error": f"Track '{track_title}' not found"})
+            conditions = ["t.title != %s"]
+            params = [ref["title"]]
 
-        conditions = ["t.title != %s"]
-        params = [ref["title"]]
+            if ref["bpm"]:
+                conditions.append("t.bpm BETWEEN %s AND %s")
+                params.extend(
+                    [float(ref["bpm"]) - bpm_tolerance, float(ref["bpm"]) + bpm_tolerance]
+                )
 
-        if ref["bpm"]:
-            conditions.append("t.bpm BETWEEN %s AND %s")
-            params.extend(
-                [float(ref["bpm"]) - bpm_tolerance, float(ref["bpm"]) + bpm_tolerance]
+            if ref["intensity"]:
+                conditions.append("t.intensity = %s")
+                params.append(ref["intensity"])
+
+            where = f"WHERE {' AND '.join(conditions)}"
+            safe_limit = min(limit, 50)
+
+            cur.execute(
+                f"""
+                SELECT t.title, t.artist, t.bpm, t.intensity, t.track_type,
+                       t.duration_minutes, t.position, t.focus_area,
+                       t.spotify_url,
+                       ABS(t.bpm - %s) as bpm_diff
+                FROM tracks t
+                {where}
+                ORDER BY ABS(t.bpm - %s), t.title
+                LIMIT %s
+            """,
+                [ref["bpm"]] + params + [ref["bpm"], safe_limit],
             )
 
-        if ref["intensity"]:
-            conditions.append("t.intensity = %s")
-            params.append(ref["intensity"])
+            rows = serialize_rows(cur.fetchall())
 
-        where = f"WHERE {' AND '.join(conditions)}"
-        safe_limit = min(limit, 50)
-
-        cur.execute(
-            f"""
-            SELECT t.title, t.artist, t.bpm, t.intensity, t.track_type,
-                   t.duration_minutes, t.position, t.focus_area,
-                   t.spotify_url,
-                   ABS(t.bpm - %s) as bpm_diff
-            FROM tracks t
-            {where}
-            ORDER BY ABS(t.bpm - %s), t.title
-            LIMIT %s
-        """,
-            [ref["bpm"]] + params + [ref["bpm"], safe_limit],
-        )
-
-        rows = serialize_rows(cur.fetchall())
-        cur.close()
-
-        return json.dumps(
-            {
-                "reference_track": {
-                    "title": ref["title"],
-                    "artist": ref["artist"],
-                    "bpm": serialize(ref["bpm"]),
-                    "intensity": ref["intensity"],
-                    "track_type": ref["track_type"],
+            return json.dumps(
+                {
+                    "reference_track": {
+                        "title": ref["title"],
+                        "artist": ref["artist"],
+                        "bpm": serialize(ref["bpm"]),
+                        "intensity": ref["intensity"],
+                        "track_type": ref["track_type"],
+                    },
+                    "similar_tracks": rows,
                 },
-                "similar_tracks": rows,
-            },
-            indent=2,
-        )
-    finally:
-        put_conn(ctx, conn)
+                indent=2,
+            )
+        finally:
+            cur.close()
 
 
 @mcp.tool()
 def get_track_details(ctx: Context, track_title: str) -> str:
-    """Get full details of a track including choreography cues.
+    """Get full details of a track including choreography cues."""
+    if err := validate_required_string(track_title, "track_title"):
+        return err
 
-    Returns all information about a track: metadata, cycling parameters,
-    choreography breakdown, coaching cues, and notes.
-
-    Args:
-        track_title: The title of the track (partial match supported)
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            "SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",)
-        )
-        row = cur.fetchone()
-        cur.close()
+        try:
+            cur.execute(
+                "SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",)
+            )
+            row = cur.fetchone()
 
-        if not row:
-            return json.dumps({"error": f"Track '{track_title}' not found"})
+            if not row:
+                return error_response(
+                    "NOT_FOUND",
+                    f"Track '{track_title}' not found",
+                    {"track_title": track_title},
+                )
 
-        result = {k: serialize(v) for k, v in row.items()}
-        return json.dumps(result, indent=2)
-    finally:
-        put_conn(ctx, conn)
+            result = {k: serialize(v) for k, v in row.items()}
+            return json.dumps(result, indent=2)
+        finally:
+            cur.close()
 
 
 @mcp.tool()
@@ -778,103 +916,89 @@ def get_top_rated_tracks(
     rating: str = "up",
     limit: int = 15,
 ) -> str:
-    """Get tracks with the best feedback ratings.
+    """Get tracks with the best feedback ratings."""
+    if err := validate_rating(rating):
+        return err
+    if err := validate_limit(limit):
+        return err
 
-    Shows tracks ranked by number of thumbs-up (or thumbs-down) ratings,
-    optionally filtered by usage context and/or audience demographic.
-
-    Args:
-        context: Filter by usage context (e.g. warmup, climb, sprint)
-        audience: Filter by audience demographic (e.g. '50+', 'mixed', 'young')
-        rating: Rating type to rank by - 'up' or 'down' (default 'up')
-        limit: Maximum results (default 15)
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        conditions = ["f.rating = %s"]
-        params = [rating]
+        try:
+            conditions = ["f.rating = %s"]
+            params = [rating]
 
-        if context:
-            conditions.append("f.context ILIKE %s")
-            params.append(f"%{context}%")
-        if audience:
-            conditions.append("f.audience = %s")
-            params.append(audience)
+            if context:
+                conditions.append("f.context ILIKE %s")
+                params.append(f"%{context}%")
+            if audience:
+                conditions.append("f.audience = %s")
+                params.append(audience)
 
-        where = f"WHERE {' AND '.join(conditions)}"
-        params.append(min(limit, 50))
+            where = f"WHERE {' AND '.join(conditions)}"
+            params.append(min(limit, 50))
 
-        cur.execute(
-            f"""
-            SELECT f.track_title, f.track_artist, f.context, f.audience, f.rating,
-                   COUNT(*) as rating_count,
-                   t.bpm, t.intensity, t.track_type, t.duration_minutes,
-                   t.spotify_url
-            FROM track_feedback f
-            LEFT JOIN tracks t ON t.title = f.track_title
-            {where}
-            GROUP BY f.track_title, f.track_artist, f.context, f.audience, f.rating,
-                     t.bpm, t.intensity, t.track_type, t.duration_minutes,
-                     t.spotify_url
-            ORDER BY COUNT(*) DESC, f.track_title
-            LIMIT %s
-        """,
-            params,
-        )
+            cur.execute(
+                f"""
+                SELECT f.track_title, f.track_artist, f.context, f.audience, f.rating,
+                       COUNT(*) as rating_count,
+                       t.bpm, t.intensity, t.track_type, t.duration_minutes,
+                       t.spotify_url
+                FROM track_feedback f
+                LEFT JOIN tracks t ON t.title = f.track_title
+                {where}
+                GROUP BY f.track_title, f.track_artist, f.context, f.audience, f.rating,
+                         t.bpm, t.intensity, t.track_type, t.duration_minutes,
+                         t.spotify_url
+                ORDER BY COUNT(*) DESC, f.track_title
+                LIMIT %s
+            """,
+                params,
+            )
 
-        rows = serialize_rows(cur.fetchall())
-        cur.close()
-        return json.dumps(rows, indent=2)
-    finally:
-        put_conn(ctx, conn)
+            rows = serialize_rows(cur.fetchall())
+            return json.dumps(rows, indent=2)
+        finally:
+            cur.close()
 
 
 @mcp.tool()
 def get_feedback_summary(ctx: Context) -> str:
-    """Get a summary of all track feedback grouped by context and rating.
-
-    Returns an overview of how many tracks have been rated up/down
-    in each context (warmup, climb, sprint, etc.), plus overall stats.
-    """
-    conn = get_conn(ctx)
-    try:
+    """Get a summary of all track feedback grouped by context and rating."""
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total_feedback,
+                    SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as total_up,
+                    SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as total_down,
+                    COUNT(DISTINCT track_title) as unique_tracks
+                FROM track_feedback
+            """)
+            overall = serialize_rows(cur.fetchall())[0]
 
-        # Overall stats
-        cur.execute("""
-            SELECT
-                COUNT(*) as total_feedback,
-                SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as total_up,
-                SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as total_down,
-                COUNT(DISTINCT track_title) as unique_tracks
-            FROM track_feedback
-        """)
-        overall = serialize_rows(cur.fetchall())[0]
+            cur.execute("""
+                SELECT
+                    COALESCE(context, 'unspecified') as context,
+                    SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
+                    SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count,
+                    COUNT(DISTINCT track_title) as unique_tracks
+                FROM track_feedback
+                GROUP BY context
+                ORDER BY COUNT(*) DESC
+            """)
+            by_context = serialize_rows(cur.fetchall())
 
-        # By context
-        cur.execute("""
-            SELECT
-                COALESCE(context, 'unspecified') as context,
-                SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
-                SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count,
-                COUNT(DISTINCT track_title) as unique_tracks
-            FROM track_feedback
-            GROUP BY context
-            ORDER BY COUNT(*) DESC
-        """)
-        by_context = serialize_rows(cur.fetchall())
-        cur.close()
-
-        return json.dumps(
-            {
-                "overall": overall,
-                "by_context": by_context,
-            },
-            indent=2,
-        )
-    finally:
-        put_conn(ctx, conn)
+            return json.dumps(
+                {
+                    "overall": overall,
+                    "by_context": by_context,
+                },
+                indent=2,
+            )
+        finally:
+            cur.close()
 
 
 @mcp.tool()
@@ -885,187 +1009,159 @@ def build_class_playlist(
     theme: str | None = None,
     audience: str | None = None,
 ) -> str:
-    """Build a suggested cycling class playlist with a proper workout arc.
+    """Build a suggested cycling class playlist with a proper workout arc."""
+    if err := validate_duration(duration_minutes):
+        return err
 
-    Generates a class structure with tracks for each phase:
-    warmup → building → peak (climbs/sprints/intervals) → recovery → cooldown.
-    Prefers top-rated tracks and avoids duplicates.
-    When audience is specified, tracks rated thumbs-down for that audience are excluded.
-
-    Args:
-        duration_minutes: Target class duration in minutes (default 45)
-        difficulty: Preferred difficulty - affects intensity selection
-        theme: Optional theme or focus (e.g. 'climb heavy', 'high energy', 'endurance')
-        audience: Target audience demographic (e.g. '50+', 'mixed', 'young')
-            excludes tracks rated down for this audience
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            # Define class structure based on duration
+            if duration_minutes <= 30:
+                structure = [
+                    {"phase": "Warmup", "types": ["warmup"], "count": 1},
+                    {"phase": "Build", "types": ["endurance", "intervals"], "count": 2},
+                    {
+                        "phase": "Peak",
+                        "types": ["climb", "sprint", "intervals"],
+                        "count": 2,
+                    },
+                    {"phase": "Cooldown", "types": ["cooldown", "recovery"], "count": 1},
+                ]
+            elif duration_minutes <= 45:
+                structure = [
+                    {"phase": "Warmup", "types": ["warmup"], "count": 1},
+                    {"phase": "Build", "types": ["endurance", "intervals"], "count": 2},
+                    {"phase": "Peak 1", "types": ["climb", "sprint"], "count": 2},
+                    {"phase": "Recovery", "types": ["recovery"], "count": 1},
+                    {
+                        "phase": "Peak 2",
+                        "types": ["climb", "sprint", "intervals"],
+                        "count": 2,
+                    },
+                    {"phase": "Cooldown", "types": ["cooldown", "recovery"], "count": 1},
+                ]
+            else:
+                structure = [
+                    {"phase": "Warmup", "types": ["warmup"], "count": 2},
+                    {"phase": "Build", "types": ["endurance", "intervals"], "count": 2},
+                    {"phase": "Peak 1", "types": ["climb", "sprint"], "count": 2},
+                    {
+                        "phase": "Active Recovery",
+                        "types": ["recovery", "endurance"],
+                        "count": 1,
+                    },
+                    {
+                        "phase": "Peak 2",
+                        "types": ["climb", "sprint", "intervals"],
+                        "count": 2,
+                    },
+                    {"phase": "Recovery", "types": ["recovery"], "count": 1},
+                    {"phase": "Peak 3", "types": ["climb", "sprint"], "count": 1},
+                    {"phase": "Cooldown", "types": ["cooldown", "recovery"], "count": 1},
+                ]
 
-        # Define class structure based on duration
-        if duration_minutes <= 30:
-            structure = [
-                {"phase": "Warmup", "types": ["warmup"], "count": 1},
-                {"phase": "Build", "types": ["endurance", "intervals"], "count": 2},
-                {
-                    "phase": "Peak",
-                    "types": ["climb", "sprint", "intervals"],
-                    "count": 2,
-                },
-                {"phase": "Cooldown", "types": ["cooldown", "recovery"], "count": 1},
-            ]
-        elif duration_minutes <= 45:
-            structure = [
-                {"phase": "Warmup", "types": ["warmup"], "count": 1},
-                {"phase": "Build", "types": ["endurance", "intervals"], "count": 2},
-                {"phase": "Peak 1", "types": ["climb", "sprint"], "count": 2},
-                {"phase": "Recovery", "types": ["recovery"], "count": 1},
-                {
-                    "phase": "Peak 2",
-                    "types": ["climb", "sprint", "intervals"],
-                    "count": 2,
-                },
-                {"phase": "Cooldown", "types": ["cooldown", "recovery"], "count": 1},
-            ]
-        else:
-            structure = [
-                {"phase": "Warmup", "types": ["warmup"], "count": 2},
-                {"phase": "Build", "types": ["endurance", "intervals"], "count": 2},
-                {"phase": "Peak 1", "types": ["climb", "sprint"], "count": 2},
-                {
-                    "phase": "Active Recovery",
-                    "types": ["recovery", "endurance"],
-                    "count": 1,
-                },
-                {
-                    "phase": "Peak 2",
-                    "types": ["climb", "sprint", "intervals"],
-                    "count": 2,
-                },
-                {"phase": "Recovery", "types": ["recovery"], "count": 1},
-                {"phase": "Peak 3", "types": ["climb", "sprint"], "count": 1},
-                {"phase": "Cooldown", "types": ["cooldown", "recovery"], "count": 1},
-            ]
+            preferred_intensities = INTENSITY_MAP.get(difficulty, []) if difficulty else []
 
-        # Map difficulty to intensity preferences
-        intensity_map = {
-            "beginner": ["low", "medium"],
-            "intermediate": ["medium", "high"],
-            "advanced": ["high", "extreme"],
-            "expert": ["high", "extreme"],
-        }
-        preferred_intensities = intensity_map.get(difficulty, []) if difficulty else []
+            used_titles = set()
+            playlist = []
 
-        used_titles = set()
-        playlist = []
+            for slot in structure:
+                type_placeholders = ",".join(["%s"] * len(slot["types"]))
+                params = []
 
-        for slot in structure:
-            type_placeholders = ",".join(["%s"] * len(slot["types"]))
-            params = []
+                audience_sums = ""
+                audience_order = ""
+                if audience:
+                    audience_sums = """,
+                               SUM(
+                                   CASE WHEN rating = 'down' AND audience = %s
+                                   THEN 1 ELSE 0
+                               END) as down_audience"""
+                    audience_order = (
+                        "CASE WHEN COALESCE(fb.down_audience, 0) > 0 "
+                        "THEN -1 ELSE 0 END DESC,"
+                    )
+                    params.append(audience)
 
-            # Audience-aware feedback subquery params come first
-            audience_sums = ""
-            audience_order = ""
-            if audience:
-                audience_sums = """,
-                           SUM(
-                               CASE WHEN rating = 'down' AND audience = %s
-                               THEN 1 ELSE 0
-                           END) as down_audience"""
-                audience_order = (
-                    "CASE WHEN COALESCE(fb.down_audience, 0) > 0 "
-                    "THEN -1 ELSE 0 END DESC,"
+                params.extend(slot["types"])
+
+                intensity_clause = ""
+                if preferred_intensities:
+                    int_placeholders = ",".join(["%s"] * len(preferred_intensities))
+                    intensity_clause = f"AND t.intensity IN ({int_placeholders})"
+                    params.extend(preferred_intensities)
+
+                theme_clause = ""
+                if theme:
+                    theme_clause = "AND (t.notes ILIKE %s OR t.focus_area ILIKE %s)"
+                    params.extend([f"%{theme}%", f"%{theme}%"])
+
+                exclude_clause = ""
+                if used_titles:
+                    exclude_placeholders = ",".join(["%s"] * len(used_titles))
+                    exclude_clause = f"AND t.title NOT IN ({exclude_placeholders})"
+                    params.extend(list(used_titles))
+
+                params.append(slot["count"])
+
+                cur.execute(
+                    f"""
+                    SELECT {TRACK_SELECT_COLUMNS},
+                           COALESCE(fb.up_count, 0) as thumbs_up,
+                           COALESCE(fb.down_count, 0) as thumbs_down
+                    FROM tracks t
+                    LEFT JOIN (
+                        SELECT track_title,
+                               SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
+                               SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count
+                               {audience_sums}
+                        FROM track_feedback
+                        GROUP BY track_title
+                    ) fb ON fb.track_title = t.title
+                    WHERE t.track_type ILIKE ANY(ARRAY[{type_placeholders}])
+                    {intensity_clause}
+                    {theme_clause}
+                    {exclude_clause}
+                    ORDER BY
+                        {audience_order}
+                        COALESCE(fb.up_count, 0) DESC,
+                        RANDOM()
+                    LIMIT %s
+                """,
+                    params,
                 )
-                params.append(audience)
 
-            params.extend(slot["types"])
+                tracks = serialize_rows(cur.fetchall())
+                for t in tracks:
+                    used_titles.add(t["title"])
 
-            intensity_clause = ""
-            if preferred_intensities:
-                int_placeholders = ",".join(["%s"] * len(preferred_intensities))
-                intensity_clause = f"AND t.intensity IN ({int_placeholders})"
-                params.extend(preferred_intensities)
+                playlist.append(
+                    {
+                        "phase": slot["phase"],
+                        "suggested_types": slot["types"],
+                        "tracks": tracks,
+                    }
+                )
 
-            theme_clause = ""
-            if theme:
-                theme_clause = "AND (t.notes ILIKE %s OR t.focus_area ILIKE %s)"
-                params.extend([f"%{theme}%", f"%{theme}%"])
-
-            # Exclude already-used tracks
-            exclude_clause = ""
-            if used_titles:
-                exclude_placeholders = ",".join(["%s"] * len(used_titles))
-                exclude_clause = f"AND t.title NOT IN ({exclude_placeholders})"
-                params.extend(list(used_titles))
-
-            params.append(slot["count"])
-
-            cur.execute(
-                f"""
-                SELECT t.id, t.spotify_id,
-                       t.title, t.artist, t.bpm, t.intensity, t.track_type,
-                       t.duration_minutes, t.position, t.focus_area,
-                       t.resistance_min, t.resistance_max,
-                       t.rpm,
-                       t.spotify_url,
-                       COALESCE(fb.up_count, 0) as thumbs_up,
-                       COALESCE(fb.down_count, 0) as thumbs_down
-                FROM tracks t
-                LEFT JOIN (
-                    SELECT track_title,
-                           SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up_count,
-                           SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down_count
-                           {audience_sums}
-                    FROM track_feedback
-                    GROUP BY track_title
-                ) fb ON fb.track_title = t.title
-                WHERE t.track_type ILIKE ANY(ARRAY[{type_placeholders}])
-                {intensity_clause}
-                {theme_clause}
-                {exclude_clause}
-                ORDER BY
-                    {audience_order}
-                    COALESCE(fb.up_count, 0) DESC,
-                    RANDOM()
-                LIMIT %s
-            """,
-                params,
+            total = sum(
+                t.get("duration_minutes", 0) or 0
+                for phase in playlist
+                for t in phase["tracks"]
             )
 
-            tracks = serialize_rows(cur.fetchall())
-            for t in tracks:
-                used_titles.add(t["title"])
-
-            playlist.append(
+            return json.dumps(
                 {
-                    "phase": slot["phase"],
-                    "suggested_types": slot["types"],
-                    "tracks": tracks,
-                }
+                    "target_duration": duration_minutes,
+                    "estimated_duration": round(total, 1),
+                    "difficulty": difficulty,
+                    "theme": theme,
+                    "playlist": playlist,
+                },
+                indent=2,
             )
-
-        cur.close()
-
-        # Calculate total duration
-        total = sum(
-            t.get("duration_minutes", 0) or 0
-            for phase in playlist
-            for t in phase["tracks"]
-        )
-
-        return json.dumps(
-            {
-                "target_duration": duration_minutes,
-                "estimated_duration": round(total, 1),
-                "difficulty": difficulty,
-                "theme": theme,
-                "playlist": playlist,
-            },
-            indent=2,
-        )
-    finally:
-        put_conn(ctx, conn)
+        finally:
+            cur.close()
 
 
 @mcp.tool()
@@ -1077,14 +1173,10 @@ def build_hybrid_playlist(
     audience: str | None = None,
     target_tracks: int | None = None,
 ) -> str:
-    """Build a full playlist using DB anchors plus OpenAI gap-fill suggestions.
+    """Build a full playlist using DB anchors plus OpenAI gap-fill suggestions."""
+    if err := validate_duration(duration_minutes):
+        return err
 
-    This tool:
-    1) Builds a base playlist from local DB tracks.
-    2) Applies feedback filters to remove disliked tracks/artists.
-    3) Uses OpenAI to suggest additional tracks only when DB coverage is short.
-    4) Returns a merged, ordered playlist.
-    """
     base_raw = build_class_playlist(
         ctx,
         duration_minutes=duration_minutes,
@@ -1093,10 +1185,14 @@ def build_hybrid_playlist(
         audience=audience,
     )
     base = json.loads(base_raw)
+    
+    # Check if base response is an error
+    if "error" in base:
+        return base_raw
+    
     playlist = base.get("playlist", []) if isinstance(base, dict) else []
 
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         feedback = fetch_feedback_signals(conn, audience=audience)
 
         disliked_titles = {
@@ -1227,8 +1323,6 @@ def build_hybrid_playlist(
             "tracks": tracks_flat,
         }
         return json.dumps(result, indent=2)
-    finally:
-        put_conn(ctx, conn)
 
 
 @mcp.tool()
@@ -1244,29 +1338,17 @@ def recommend_class_tracks(
     exclude_songs_or_artists: str | None = None,
     audience: str | None = None,
 ) -> str:
-    """Return OpenAI-suggested tracks, enriched from DB when available.
+    """Return OpenAI-suggested tracks, enriched from DB when available."""
+    if err := validate_duration(class_length_minutes, "class_length_minutes"):
+        return err
 
-    Inputs mirror UI fields:
-    - Class length
-    - Theme / vibe
-    - Custom intensity arc (comma-separated, optional)
-    - Preferred genres/artists (comma-separated, optional)
-    - Excluded genres and songs/artists (comma-separated, optional)
-
-    Output shape:
-    - If a suggested track exists in local DB (title+artist),
-      return full DB track schema + suggest_type.
-    - Otherwise return: title, artist, bpm, suggest_type.
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         preferred_genre_list = parse_csv_list(preferred_genres)
         preferred_artist_list = parse_csv_list(preferred_artists)
         excluded_genre_list = [g.lower() for g in parse_csv_list(exclude_genres)]
         excluded_song_artist_list = parse_csv_list(exclude_songs_or_artists)
         arc = normalize_arc_types(custom_intensity_arc, class_length_minutes)
 
-        # Feedback signals for ranking and filtering.
         feedback = fetch_feedback_signals(conn, audience=audience)
         disliked_titles = {
             t.lower().strip() for t in feedback.get("disliked_titles", [])
@@ -1275,7 +1357,6 @@ def recommend_class_tracks(
             a.lower().strip() for a in feedback.get("disliked_artists", [])
         }
 
-        # Track count target (about 3.5-4.5 minutes average per song).
         target_count = max(8, min(20, round(class_length_minutes / 4)))
 
         theme_parts = []
@@ -1298,7 +1379,6 @@ def recommend_class_tracks(
 
         composed_theme = " | ".join(theme_parts) if theme_parts else None
 
-        # OpenAI-first flow: generate candidate tracks using feedback + preferences.
         ai_tracks = suggest_external_tracks_with_openai(
             duration_minutes=class_length_minutes,
             difficulty=None,
@@ -1335,21 +1415,13 @@ def recommend_class_tracks(
                 continue
 
             suggest_type = str(t.get("focus_area") or "build").lower()
-            if suggest_type not in {
-                "warmup",
-                "build",
-                "climb",
-                "sprint",
-                "recovery",
-                "cooldown",
-            }:
+            if suggest_type not in VALID_TRACK_TYPES:
                 suggest_type = "build"
 
             existing = lookup_track_by_title_artist(conn, title, artist)
 
             used.add(key)
             if existing:
-                # Preserve the standard response shape and add Spotify fields if known.
                 results.append(
                     {
                         "title": title,
@@ -1361,7 +1433,6 @@ def recommend_class_tracks(
                     }
                 )
             else:
-                # If not in DB, return minimal shape only.
                 results.append(
                     {
                         "title": title,
@@ -1372,8 +1443,6 @@ def recommend_class_tracks(
                 )
 
         return json.dumps({"tracks": results}, indent=2)
-    finally:
-        put_conn(ctx, conn)
 
 
 @mcp.tool()
@@ -1382,51 +1451,46 @@ def list_routines(
     difficulty: str | None = None,
     limit: int = 20,
 ) -> str:
-    """List existing cycling routines/classes with their track counts.
+    """List existing cycling routines/classes with their track counts."""
+    if err := validate_limit(limit):
+        return err
 
-    Shows saved routines from base44 with key metadata.
-
-    Args:
-        difficulty: Filter by difficulty (beginner, intermediate, advanced, expert)
-        limit: Maximum results (default 20)
-    """
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        conditions = []
-        params = []
+        try:
+            conditions = []
+            params = []
 
-        if difficulty:
-            conditions.append("r.difficulty = %s")
-            params.append(difficulty)
+            if difficulty:
+                conditions.append("r.difficulty = %s")
+                params.append(difficulty)
 
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.append(min(limit, 50))
+            where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            params.append(min(limit, 50))
 
-        cur.execute(
-            f"""
-            SELECT r.name, r.description, r.theme, r.intensity_arc,
-                   r.difficulty, r.total_duration_minutes,
-                   r.class_summary, r.tags,
-                   r.spotify_playlist_id,
-                   COUNT(rt.id) as track_count
-            FROM routines r
-            LEFT JOIN routine_tracks rt ON r.id = rt.routine_id
-            {where}
-            GROUP BY r.id, r.name, r.description, r.theme, r.intensity_arc,
-                     r.difficulty, r.total_duration_minutes, r.class_summary,
-                     r.tags, r.spotify_playlist_id
-            ORDER BY r.name
-            LIMIT %s
-        """,
-            params,
-        )
+            cur.execute(
+                f"""
+                SELECT r.name, r.description, r.theme, r.intensity_arc,
+                       r.difficulty, r.total_duration_minutes,
+                       r.class_summary, r.tags,
+                       r.spotify_playlist_id,
+                       COUNT(rt.id) as track_count
+                FROM routines r
+                LEFT JOIN routine_tracks rt ON r.id = rt.routine_id
+                {where}
+                GROUP BY r.id, r.name, r.description, r.theme, r.intensity_arc,
+                         r.difficulty, r.total_duration_minutes, r.class_summary,
+                         r.tags, r.spotify_playlist_id
+                ORDER BY r.name
+                LIMIT %s
+            """,
+                params,
+            )
 
-        rows = serialize_rows(cur.fetchall())
-        cur.close()
-        return json.dumps(rows, indent=2)
-    finally:
-        put_conn(ctx, conn)
+            rows = serialize_rows(cur.fetchall())
+            return json.dumps(rows, indent=2)
+        finally:
+            cur.close()
 
 
 @mcp.tool()
@@ -1437,104 +1501,97 @@ def rate_track(
     context: str | None = None,
     audience: str | None = None,
 ) -> str:
-    """Rate a track with thumbs up or down. Saves to local database AND syncs to base44.
+    """Rate a track with thumbs up or down. Saves to local database AND syncs to base44."""
+    if err := validate_required_string(track_title, "track_title"):
+        return err
+    if err := validate_rating(rating):
+        return err
 
-    Use this after reviewing a track suggestion to record whether it's a good
-    fit. Ratings influence future suggestions - thumbs-up tracks get prioritized.
-
-    Args:
-        track_title: The exact title of the track to rate
-        rating: 'up' for thumbs up, 'down' for thumbs down
-        context: Usage context (e.g. warmup, climb, sprint, recovery, cooldown)
-        audience: Target audience demographic (e.g. '50+', 'mixed', 'young')
-    """
-    if rating not in ("up", "down"):
-        return json.dumps({"error": "Rating must be 'up' or 'down'"})
-
-    conn = get_conn(ctx)
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        # Look up the track to get artist and spotify_id
-        cur.execute(
-            "SELECT title, artist, spotify_id FROM tracks WHERE title ILIKE %s LIMIT 1",
-            (f"%{track_title}%",),
-        )
-        track = cur.fetchone()
-
-        if not track:
-            cur.close()
-            return json.dumps({"error": f"Track '{track_title}' not found in database"})
-
-        track_title_exact = track["title"]
-        track_artist = track["artist"]
-        spotify_id = track["spotify_id"]
-
-        # Insert into local database
-        cur.execute(
-            """
-            INSERT INTO track_feedback (
-                track_title, track_artist, spotify_id,
-                rating, context, audience, updated_at
+        try:
+            cur.execute(
+                "SELECT title, artist, spotify_id FROM tracks WHERE title ILIKE %s LIMIT 1",
+                (f"%{track_title}%",),
             )
-            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (track_title, rating, COALESCE(context, ''), COALESCE(audience, ''))
-            DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-            RETURNING id
-        """,
-            (track_title_exact, track_artist, spotify_id, rating, context, audience),
-        )
+            track = cur.fetchone()
 
-        feedback_id = cur.fetchone()["id"]
-        conn.commit()
-
-        # Sync to base44
-        app_ctx = ctx.request_context.lifespan_context
-        base44_result = None
-        if app_ctx.base44_api_key and app_ctx.base44_app_id:
-            try:
-                response = requests.post(
-                    f"{app_ctx.base44_api_url}/apps/{app_ctx.base44_app_id}/entities/TrackFeedback",
-                    headers={
-                        "api_key": app_ctx.base44_api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "track_title": track_title_exact,
-                        "track_artist": track_artist,
-                        "spotify_id": spotify_id,
-                        "rating": rating,
-                        "context": context or "",
-                    },
-                    timeout=10,
+            if not track:
+                return error_response(
+                    "NOT_FOUND",
+                    f"Track '{track_title}' not found in database",
+                    {"track_title": track_title},
                 )
-                response.raise_for_status()
-                base44_result = "synced"
-            except Exception as e:
-                logger.error(f"Failed to sync feedback to base44: {e}")
-                base44_result = f"failed: {e}"
 
-        cur.close()
+            track_title_exact = track["title"]
+            track_artist = track["artist"]
+            spotify_id = track["spotify_id"]
 
-        emoji = "\U0001f44d" if rating == "up" else "\U0001f44e"
-        return json.dumps(
-            {
-                "status": "saved",
-                "feedback_id": feedback_id,
-                "track": track_title_exact,
-                "artist": track_artist,
-                "rating": f"{emoji} {rating}",
-                "context": context,
-                "audience": audience,
-                "base44_sync": base44_result or "skipped (no API credentials)",
-            },
-            indent=2,
-        )
-    except Exception as e:
-        conn.rollback()
-        return json.dumps({"error": f"Failed to save rating: {e}"})
-    finally:
-        put_conn(ctx, conn)
+            cur.execute(
+                """
+                INSERT INTO track_feedback (
+                    track_title, track_artist, spotify_id,
+                    rating, context, audience, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (track_title, rating, COALESCE(context, ''), COALESCE(audience, ''))
+                DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+                RETURNING id
+            """,
+                (track_title_exact, track_artist, spotify_id, rating, context, audience),
+            )
+
+            feedback_id = cur.fetchone()["id"]
+            conn.commit()
+
+            app_ctx = ctx.request_context.lifespan_context
+            base44_result = None
+            if app_ctx.base44_api_key and app_ctx.base44_app_id:
+                try:
+                    response = requests.post(
+                        f"{app_ctx.base44_api_url}/apps/{app_ctx.base44_app_id}/entities/TrackFeedback",
+                        headers={
+                            "api_key": app_ctx.base44_api_key,
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "track_title": track_title_exact,
+                            "track_artist": track_artist,
+                            "spotify_id": spotify_id,
+                            "rating": rating,
+                            "context": context or "",
+                        },
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    base44_result = "synced"
+                except Exception as e:
+                    logger.error(f"Failed to sync feedback to base44: {e}")
+                    base44_result = f"failed: {str(e)}"
+
+            emoji = "\U0001f44d" if rating == "up" else "\U0001f44e"
+            return json.dumps(
+                {
+                    "status": "saved",
+                    "feedback_id": feedback_id,
+                    "track": track_title_exact,
+                    "artist": track_artist,
+                    "rating": f"{emoji} {rating}",
+                    "context": context,
+                    "audience": audience,
+                    "base44_sync": base44_result or "skipped (no API credentials)",
+                },
+                indent=2,
+            )
+        except Exception as e:
+            conn.rollback()
+            return error_response(
+                "DATABASE_ERROR",
+                f"Failed to save rating: {str(e)}",
+                {"track_title": track_title, "rating": rating},
+            )
+        finally:
+            cur.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1543,61 +1600,52 @@ def rate_track(
 
 
 @mcp.resource("stats://tracks")
-def track_stats() -> str:
+def track_stats(ctx: Context) -> str:
     """Summary statistics of available tracks by type, intensity, and BPM ranges."""
-    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
-    conn = psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "5432")),
-        database=os.getenv("DB_NAME", "choreography"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-    )
-    try:
+    with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cur.execute("SELECT COUNT(*) as total FROM tracks")
+            row = cur.fetchone()
+            total = row["total"] if row else 0
 
-        cur.execute("SELECT COUNT(*) as total FROM tracks")
-        row = cur.fetchone()
-        total = row["total"] if row else 0
+            cur.execute("""
+                SELECT track_type, COUNT(*) as count,
+                       ROUND(AVG(bpm)::numeric, 1) as avg_bpm,
+                       ROUND(MIN(bpm)::numeric, 1) as min_bpm,
+                       ROUND(MAX(bpm)::numeric, 1) as max_bpm
+                FROM tracks
+                WHERE track_type IS NOT NULL
+                GROUP BY track_type ORDER BY count DESC
+            """)
+            by_type = serialize_rows(cur.fetchall())
 
-        cur.execute("""
-            SELECT track_type, COUNT(*) as count,
-                   ROUND(AVG(bpm)::numeric, 1) as avg_bpm,
-                   ROUND(MIN(bpm)::numeric, 1) as min_bpm,
-                   ROUND(MAX(bpm)::numeric, 1) as max_bpm
-            FROM tracks
-            WHERE track_type IS NOT NULL
-            GROUP BY track_type ORDER BY count DESC
-        """)
-        by_type = serialize_rows(cur.fetchall())
+            cur.execute("""
+                SELECT intensity, COUNT(*) as count
+                FROM tracks WHERE intensity IS NOT NULL
+                GROUP BY intensity ORDER BY count DESC
+            """)
+            by_intensity = serialize_rows(cur.fetchall())
 
-        cur.execute("""
-            SELECT intensity, COUNT(*) as count
-            FROM tracks WHERE intensity IS NOT NULL
-            GROUP BY intensity ORDER BY count DESC
-        """)
-        by_intensity = serialize_rows(cur.fetchall())
+            cur.execute("""
+                SELECT ROUND(MIN(bpm)::numeric, 1) as min_bpm,
+                       ROUND(MAX(bpm)::numeric, 1) as max_bpm,
+                       ROUND(AVG(bpm)::numeric, 1) as avg_bpm
+                FROM tracks WHERE bpm IS NOT NULL
+            """)
+            bpm_range = serialize_rows(cur.fetchall())[0]
 
-        cur.execute("""
-            SELECT ROUND(MIN(bpm)::numeric, 1) as min_bpm,
-                   ROUND(MAX(bpm)::numeric, 1) as max_bpm,
-                   ROUND(AVG(bpm)::numeric, 1) as avg_bpm
-            FROM tracks WHERE bpm IS NOT NULL
-        """)
-        bpm_range = serialize_rows(cur.fetchall())[0]
-
-        cur.close()
-        return json.dumps(
-            {
-                "total_tracks": total,
-                "by_track_type": by_type,
-                "by_intensity": by_intensity,
-                "bpm_range": bpm_range,
-            },
-            indent=2,
-        )
-    finally:
-        conn.close()
+            return json.dumps(
+                {
+                    "total_tracks": total,
+                    "by_track_type": by_type,
+                    "by_intensity": by_intensity,
+                    "bpm_range": bpm_range,
+                },
+                indent=2,
+            )
+        finally:
+            cur.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1609,13 +1657,7 @@ def track_stats() -> str:
 def build_class(
     duration: str = "45", difficulty: str = "intermediate", audience: str = "50+"
 ) -> str:
-    """Template prompt for building a cycling class playlist.
-
-    Args:
-        duration: Target duration in minutes
-        difficulty: Difficulty level (beginner, intermediate, advanced, expert)
-        audience: Target audience demographic (e.g. '50+', 'mixed', 'young')
-    """
+    """Template prompt for building a cycling class playlist."""
     return f"""Help me build a {duration}-minute cycling class
 at {difficulty} difficulty for a {audience} audience.
 
@@ -1689,7 +1731,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Apply network settings before transport startup.
     mcp.settings.host = args.host
     mcp.settings.port = args.port
     mcp.settings.mount_path = args.mount_path
