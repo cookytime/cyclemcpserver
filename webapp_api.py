@@ -25,6 +25,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from pydantic import BaseModel, Field
+from typing import Any, Optional
 
 import httpx
 import psycopg2
@@ -48,6 +50,50 @@ WEBHOOK_STATE_FILE = Path(
 ).expanduser()
 WEBHOOK_MAX_EVENT_IDS = int(os.getenv("WEBHOOK_MAX_EVENT_IDS", "5000"))
 
+class PlaylistChatRequest(BaseModel):
+    conversation_id: str
+    lock: bool = False
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    draft_playlist: dict[str, Any] = Field(default_factory=lambda: {"tracks": []})
+    user_message: str = ""
+
+class PlaylistChatResponse(BaseModel):
+    assistant_message: str
+    stage: str
+    questions: list[str] = Field(default_factory=list)
+    draft_playlist: dict[str, Any]
+    final_playlist: Optional[dict[str, Any]] = None
+
+@app.post("/api/playlist/chat", tags=["playlist"])
+async def playlist_chat(
+    request_data: PlaylistChatRequest,
+    _auth: None = Depends(require_api_key),
+) -> PlaylistChatResponse:
+    # 1) Build a small state packet
+    state = {
+        "lock": request_data.lock,
+        "user_message": request_data.user_message,
+        "inputs": request_data.inputs,
+        "draft_playlist": request_data.draft_playlist,
+    }
+
+    # 2) Call OpenAI HERE (or your MCP tools) and get back structured JSON
+    #    IMPORTANT: enforce excluded_artists/genres and “remove artist” rules here.
+
+    result = {
+        "assistant_message": "stub",
+        "stage": "refining",
+        "questions": [],
+        "draft_playlist": request_data.draft_playlist,
+        "final_playlist": None,
+    }
+
+    # 3) If lock=true, set final
+    if request_data.lock:
+        result["stage"] = "final"
+        result["final_playlist"] = result["final_playlist"] or result["draft_playlist"]
+
+    return PlaylistChatResponse(**result)
 
 class PlaylistRequest(BaseModel):
     duration_minutes: int = Field(default=45, ge=20, le=120)
