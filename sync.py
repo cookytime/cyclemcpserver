@@ -116,11 +116,7 @@ class Base44Sync:
             if rpm is None:
                 cadence_min = track.get("cadence_min")
                 cadence_max = track.get("cadence_max")
-                rpm = (
-                    cadence_min
-                    if cadence_min is not None
-                    else cadence_max
-                )
+                rpm = cadence_min if cadence_min is not None else cadence_max
 
             # Choreography data
             choreography = self.normalize_choreography(track.get("choreography"))
@@ -283,9 +279,7 @@ class Base44Sync:
             print(f"  - Tracks added: {tracks_added}")
             print(f"  - Tracks updated: {tracks_updated}")
             print(f"  - Total tracks: {len(tracks)}")
-            print(
-                f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds"
-            )
+            print(f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds")
 
             return True
 

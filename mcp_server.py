@@ -260,9 +260,7 @@ async def app_lifespan(server: FastMCP):
 # Optional MCP HTTP auth
 _auth_token = os.getenv("MCP_AUTH_BEARER_TOKEN", "").strip()
 _auth_scopes = [
-    s.strip()
-    for s in os.getenv("MCP_AUTH_SCOPES", "mcp:access").split(",")
-    if s.strip()
+    s.strip() for s in os.getenv("MCP_AUTH_SCOPES", "mcp:access").split(",") if s.strip()
 ]
 _auth_issuer_url = os.getenv("MCP_AUTH_ISSUER_URL", "http://127.0.0.1:8000")
 _auth_resource_url = os.getenv("MCP_AUTH_RESOURCE_URL", "http://127.0.0.1:8000")
@@ -280,9 +278,7 @@ if _auth_token:
         client_id=os.getenv("MCP_AUTH_CLIENT_ID", "authorized-client"),
         scopes=_auth_scopes,
     )
-    logger.info(
-        "MCP HTTP auth enabled (Bearer token + scopes=%s).", ",".join(_auth_scopes)
-    )
+    logger.info("MCP HTTP auth enabled (Bearer token + scopes=%s).", ",".join(_auth_scopes))
 
 # Initialize FastMCP server
 mcp = FastMCP(
@@ -347,9 +343,7 @@ def lookup_track_by_title_artist(conn, title: str, artist: str) -> dict[str, Any
         cur.close()
 
 
-def derive_target_track_count(
-    duration_minutes: int, explicit_target: int | None
-) -> int:
+def derive_target_track_count(duration_minutes: int, explicit_target: int | None) -> int:
     if explicit_target is not None:
         return max(5, min(30, explicit_target))
     if duration_minutes <= 30:
@@ -435,9 +429,9 @@ def call_openai_with_retry(
             if attempt == max_retries - 1:
                 logger.error(f"OpenAI API call failed after {max_retries} attempts: {e}")
                 raise
-            
+
             # Check if it's a rate limit or server error
-            if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e, "response") and e.response is not None:
                 status_code = e.response.status_code
                 if status_code in (429, 500, 502, 503, 504):
                     logger.warning(
@@ -572,9 +566,7 @@ def infer_default_arc(duration_minutes: int) -> list[str]:
     return ["warmup", "build", "climb", "recovery", "climb", "sprint", "cooldown"]
 
 
-def normalize_arc_types(
-    custom_intensity_arc: str | None, duration_minutes: int
-) -> list[str]:
+def normalize_arc_types(custom_intensity_arc: str | None, duration_minutes: int) -> list[str]:
     provided = [s.lower() for s in parse_csv_list(custom_intensity_arc)]
     if not provided:
         return infer_default_arc(duration_minutes)
@@ -820,9 +812,7 @@ def find_similar_tracks(
     with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         try:
-            cur.execute(
-                "SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",)
-            )
+            cur.execute("SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",))
             ref = cur.fetchone()
 
             if not ref:
@@ -890,9 +880,7 @@ def get_track_details(ctx: Context, track_title: str) -> str:
     with get_db_connection(ctx) as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         try:
-            cur.execute(
-                "SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",)
-            )
+            cur.execute("SELECT * FROM tracks WHERE title ILIKE %s LIMIT 1", (f"%{track_title}%",))
             row = cur.fetchone()
 
             if not row:
@@ -1079,8 +1067,7 @@ def build_class_playlist(
                                    THEN 1 ELSE 0
                                END) as down_audience"""
                     audience_order = (
-                        "CASE WHEN COALESCE(fb.down_audience, 0) > 0 "
-                        "THEN -1 ELSE 0 END DESC,"
+                        "CASE WHEN COALESCE(fb.down_audience, 0) > 0 THEN -1 ELSE 0 END DESC,"
                     )
                     params.append(audience)
 
@@ -1145,9 +1132,7 @@ def build_class_playlist(
                 )
 
             total = sum(
-                t.get("duration_minutes", 0) or 0
-                for phase in playlist
-                for t in phase["tracks"]
+                t.get("duration_minutes", 0) or 0 for phase in playlist for t in phase["tracks"]
             )
 
             return json.dumps(
@@ -1185,22 +1170,18 @@ def build_hybrid_playlist(
         audience=audience,
     )
     base = json.loads(base_raw)
-    
+
     # Check if base response is an error
     if "error" in base:
         return base_raw
-    
+
     playlist = base.get("playlist", []) if isinstance(base, dict) else []
 
     with get_db_connection(ctx) as conn:
         feedback = fetch_feedback_signals(conn, audience=audience)
 
-        disliked_titles = {
-            t.lower().strip() for t in feedback.get("disliked_titles", [])
-        }
-        disliked_artists = {
-            a.lower().strip() for a in feedback.get("disliked_artists", [])
-        }
+        disliked_titles = {t.lower().strip() for t in feedback.get("disliked_titles", [])}
+        disliked_artists = {a.lower().strip() for a in feedback.get("disliked_artists", [])}
 
         def allowed(track: dict[str, Any]) -> bool:
             title = str(track.get("title") or "").lower().strip()
@@ -1350,12 +1331,8 @@ def recommend_class_tracks(
         arc = normalize_arc_types(custom_intensity_arc, class_length_minutes)
 
         feedback = fetch_feedback_signals(conn, audience=audience)
-        disliked_titles = {
-            t.lower().strip() for t in feedback.get("disliked_titles", [])
-        }
-        disliked_artists = {
-            a.lower().strip() for a in feedback.get("disliked_artists", [])
-        }
+        disliked_titles = {t.lower().strip() for t in feedback.get("disliked_titles", [])}
+        disliked_artists = {a.lower().strip() for a in feedback.get("disliked_artists", [])}
 
         target_count = max(8, min(20, round(class_length_minutes / 4)))
 
@@ -1373,9 +1350,7 @@ def recommend_class_tracks(
         if excluded_genre_list:
             theme_parts.append(f"Excluded genres: {', '.join(excluded_genre_list)}")
         if excluded_song_artist_list:
-            theme_parts.append(
-                f"Excluded songs or artists: {', '.join(excluded_song_artist_list)}"
-            )
+            theme_parts.append(f"Excluded songs or artists: {', '.join(excluded_song_artist_list)}")
 
         composed_theme = " | ".join(theme_parts) if theme_parts else None
 

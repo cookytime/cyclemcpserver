@@ -73,8 +73,7 @@ def build_prompt(
         "- Keep behavior unchanged unless required to fix errors.\n"
         "- No prose. No markdown fences.\n\n"
         f"## Check Output\n{log_text}\n\n"
-        "## Files\n"
-        + "\n\n".join(sections)
+        "## Files\n" + "\n\n".join(sections)
     )
 
 
@@ -285,7 +284,9 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
-    parser.add_argument("--base-url", default=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+    parser.add_argument(
+        "--base-url", default=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    )
     parser.add_argument("--request-timeout", type=int, default=180)
     parser.add_argument("--openai-retries", type=int, default=3)
     parser.add_argument("--retry-backoff", type=float, default=2.0)
@@ -385,9 +386,7 @@ def main() -> int:
 
             target = files[0]
             print(f"Patch still invalid. Falling back to full-file rewrite for {target}...")
-            rewrite_prompt = build_rewrite_prompt(
-                target, repo_root, log_text, args.max_file_chars
-            )
+            rewrite_prompt = build_rewrite_prompt(target, repo_root, log_text, args.max_file_chars)
             rewritten = call_openai(
                 api_key,
                 args.model,
@@ -414,7 +413,6 @@ def main() -> int:
 
         apply_patch(repo_root, patch_file, False)
         print(f"Applied patch: {patch_file}")
-
 
     final = run_check(repo_root, args.check_cmd, log_file)
     return final

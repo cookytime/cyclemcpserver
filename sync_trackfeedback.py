@@ -153,9 +153,7 @@ class Base44TrackFeedbackSync:
             print(f"  - Feedback added: {added}")
             print(f"  - Feedback updated: {updated}")
             print(f"  - Total entries: {len(feedback)}")
-            print(
-                f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds"
-            )
+            print(f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds")
 
             return True
 

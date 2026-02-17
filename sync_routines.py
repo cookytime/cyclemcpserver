@@ -117,16 +117,12 @@ class Base44RoutineSync:
             was_inserted = result[1]
 
             # Delete existing track associations for this routine
-            cursor.execute(
-                "DELETE FROM routine_tracks WHERE routine_id = %s", (routine_id,)
-            )
+            cursor.execute("DELETE FROM routine_tracks WHERE routine_id = %s", (routine_id,))
 
             # Insert track associations in order
             for order, track_base44_id in enumerate(track_ids, start=1):
                 # Try to find the track_id if the track exists in our database
-                cursor.execute(
-                    "SELECT id FROM tracks WHERE base44_id = %s", (track_base44_id,)
-                )
+                cursor.execute("SELECT id FROM tracks WHERE base44_id = %s", (track_base44_id,))
                 track_row = cursor.fetchone()
                 track_id = track_row[0] if track_row else None
 
@@ -190,9 +186,7 @@ class Base44RoutineSync:
             print(f"  - Routines added: {routines_added}")
             print(f"  - Routines updated: {routines_updated}")
             print(f"  - Total routines: {len(routines)}")
-            print(
-                f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds"
-            )
+            print(f"  - Duration: {(sync_end - sync_start).total_seconds():.2f} seconds")
 
             return True
 
