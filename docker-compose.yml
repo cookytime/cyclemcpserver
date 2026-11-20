@@ -2,7 +2,7 @@ name: cyclemcpserver
 
 services:
   postgres:
-    image: postgres:18
+    image: postgres:19
     environment:
       POSTGRES_DB: ${DB_NAME:-cyclesync}
       POSTGRES_USER: ${DB_USER:-glen}
